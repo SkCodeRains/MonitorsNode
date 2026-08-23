@@ -13,7 +13,7 @@ const Item = require('./models/item.model');
 const app = express();
 const PORT = process.env.PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET || 'MONITOR_SUPER_SECRET_JWT_KEY_2026_PROD';
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://skcoderains_db_user:U.%2F6d3RC_bQiqAV@cluster0.ltf5au1.mongodb.net/monitor_db?retryWrites=true&w=majority&appName=Cluster0';
+const MONGODB_URI = process.env.MONGODB_URI || '';
 const DB_NAME = process.env.DB_NAME || 'monitor_db';
 
 // Disable Mongoose command buffering so queries don't hang if Atlas is connecting
@@ -21,92 +21,143 @@ mongoose.set('bufferCommands', false);
 
 // In-Memory fallback store for zero-latency operations even when MongoDB is connecting
 let memoryStore = [];
-let isDbConnected = false;
 
-// Connect to MongoDB Atlas with production keepalive and self-healing connection pool
-mongoose.connect(MONGODB_URI, { 
-  dbName: DB_NAME,
-  serverSelectionTimeoutMS: 5000,
-  connectTimeoutMS: 10000,
-  socketTimeoutMS: 45000,
-  maxPoolSize: 10,
-  minPoolSize: 2,           // Keeps minimum 2 warm connections open
-  maxIdleTimeMS: 60000,     // Recycles idle connections older than 60s
-  heartbeatFrequencyMS: 10000 // SDAM heartbeat every 10s keeps TCP sockets alive through routers
-})
-  .then(async () => {
-    isDbConnected = true;
-    console.log(`[MongoDB] Connected successfully to Atlas Cluster (Database: "${DB_NAME}")`);
+// Global connection caching for serverless environments (Vercel / AWS Lambda)
+let cached = global.mongoose;
+if (!cached) {
+  cached = global.mongoose = { conn: null, promise: null };
+}
 
-    // Sync any items stored in memory into MongoDB Atlas
-    if (memoryStore.length > 0) {
-      try {
-        for (const item of memoryStore) {
-          await Item.findOneAndUpdate({ id: item.id }, item, { upsert: true, returnDocument: 'after' });
+/**
+ * Ensures MongoDB Atlas connection is cached and reused across serverless invocations
+ * Uses short timeouts (4000ms) to ensure fast failover without tripping Vercel serverless timeouts
+ */
+async function connectDB() {
+  if (!MONGODB_URI) {
+    return null;
+  }
+  if (cached.conn && mongoose.connection.readyState === 1) {
+    return cached.conn;
+  }
+  if (!cached.promise) {
+    const opts = {
+      dbName: DB_NAME,
+      bufferCommands: false,
+      serverSelectionTimeoutMS: 4000,
+      connectTimeoutMS: 4000,
+      socketTimeoutMS: 30000,
+      maxPoolSize: 10,
+      minPoolSize: 1,
+      maxIdleTimeMS: 30000,
+      heartbeatFrequencyMS: 10000
+    };
+    cached.promise = mongoose.connect(MONGODB_URI, opts).then(async (mongooseInstance) => {
+      console.log(`[MongoDB] Connected successfully to Atlas Cluster (Database: "${DB_NAME}")`);
+      // Sync any items stored in memory into MongoDB Atlas
+      if (memoryStore.length > 0) {
+        try {
+          for (const item of memoryStore) {
+            await Item.findOneAndUpdate({ id: item.id }, item, { upsert: true, returnDocument: 'after' });
+          }
+          console.log(`[MongoDB] Synced ${memoryStore.length} in-memory item(s) to Atlas`);
+        } catch (err) {
+          console.warn('[MongoDB] Sync error:', err.message);
         }
-        console.log(`[MongoDB] Synced ${memoryStore.length} in-memory item(s) to Atlas`);
-      } catch (err) {
-        console.error('[MongoDB] Sync error:', err.message);
       }
-    }
-  })
-  .catch((err) => {
-    isDbConnected = false;
-    console.warn(`\n[MongoDB Notice] Could not connect to Atlas: ${err.message}`);
-    console.warn(`👉 Action Needed: In MongoDB Atlas dashboard -> Network Access -> Add IP Address -> Select "Allow Access from Anywhere (0.0.0.0/0)" or your current IP.`);
-    console.log(`[Storage] Seamlessly operating with fast in-memory storage while waiting for Atlas connection.\n`);
+      return mongooseInstance;
+    });
+  }
+  try {
+    cached.conn = await cached.promise;
+  } catch (e) {
+    cached.promise = null;
+    console.warn('[MongoDB] Connection warning/error:', e.message);
+  }
+  return cached.conn;
+}
+
+// Attempt initial connection on boot
+if (MONGODB_URI) {
+  connectDB().catch(err => {
+    console.warn(`[MongoDB Notice] Initial connect failed: ${err.message}`);
   });
+}
 
-mongoose.connection.on('connected', () => {
-  isDbConnected = true;
-});
+// User credentials (configurable via environment variables)
+const DEFAULT_USER_EMAIL = process.env.DEFAULT_USER_EMAIL || 'skcoderains@gmail.com';
+const DEFAULT_USER_PASSWORD = process.env.DEFAULT_USER_PASSWORD || 'CodeR@ins69';
+const DEFAULT_USER_NAME = process.env.DEFAULT_USER_NAME || 'CodeRains Admin';
 
-mongoose.connection.on('disconnected', () => {
-  isDbConnected = false;
-  console.warn('[MongoDB] Disconnected from Atlas - using in-memory store');
-});
-
-// User credentials (bcrypt hashed)
 const DEFAULT_USER = {
   id: 'usr_admin_01',
-  email: 'skcoderains@gmail.com',
-  name: 'CodeRains Admin',
-  passwordHash: bcrypt.hashSync('CodeR@ins69', 10)
+  email: DEFAULT_USER_EMAIL,
+  name: DEFAULT_USER_NAME,
+  passwordHash: bcrypt.hashSync(DEFAULT_USER_PASSWORD, 10)
 };
 
 // Enable Cross-Origin Resource Sharing (CORS)
-app.use(cors());
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+}));
+app.options('*', cors());
 
-// Middleware for parsing JSON and URL-encoded data
-app.use(express.json({ limit: '100mb' }));
-app.use(express.urlencoded({ extended: true, limit: '100mb' }));
+// Middleware for parsing JSON and URL-encoded data with strict size limits
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+// Middleware to catch malformed JSON payloads gracefully
+app.use((err, req, res, next) => {
+  if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
+    return res.status(400).json({
+      success: false,
+      error: 'Invalid JSON payload in request body.'
+    });
+  }
+  next(err);
+});
 
 // Create standard HTTP server wrapping Express
 const server = http.createServer(app);
 
 // Initialize WebSocket Server attached to the HTTP server
-const wss = new WebSocketServer({ server });
+let wss = null;
+try {
+  wss = new WebSocketServer({ server });
+} catch (err) {
+  console.warn('[WebSocket] Warning initializing WebSocketServer:', err.message);
+}
 
 /**
  * Broadcast event message to all authenticated WebSocket clients
  */
 function broadcast(event) {
+  if (!wss || !wss.clients) return;
   const message = JSON.stringify(event);
   wss.clients.forEach(client => {
     if (client.readyState === WebSocket.OPEN && client.isAuthenticated !== false) {
-      client.send(message);
+      try {
+        client.send(message);
+      } catch (err) {
+        console.warn('[WebSocket] Broadcast error to client:', err.message);
+      }
     }
   });
 }
 
 /**
- * Helper to fetch all items (from Atlas if connected, otherwise from memoryStore)
+ * Helper to fetch all items with serverless resilience
  */
 async function getAllItems() {
-  if (isDbConnected) {
+  await connectDB();
+  if (mongoose.connection.readyState === 1) {
     try {
       const items = await Item.find().sort({ createdAt: -1 }).lean();
-      return items;
+      return items.map(item => ({
+        ...item,
+        id: item.id || (item._id ? String(item._id) : crypto.randomUUID())
+      }));
     } catch (err) {
       console.warn('[Storage] DB query failed, using memory store:', err.message);
     }
@@ -114,226 +165,240 @@ async function getAllItems() {
   return [...memoryStore].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 }
 
-// Handle WebSocket Client Connections
-wss.on('connection', async (ws, req) => {
-  const clientIp = req.socket.remoteAddress;
+// Handle WebSocket Client Connections (when running in persistent server environment)
+if (wss) {
+  wss.on('connection', async (ws, req) => {
+    const clientIp = req.socket.remoteAddress;
 
-  // Extract token from query params: ws://localhost:5000?token=...
-  let token = null;
-  if (req.url && req.url.includes('token=')) {
-    const urlParams = new URLSearchParams(req.url.split('?')[1]);
-    token = urlParams.get('token');
-  }
+    // Extract token from query params: ws://localhost:5000?token=...
+    let token = null;
+    if (req.url && req.url.includes('token=')) {
+      const urlParams = new URLSearchParams(req.url.split('?')[1]);
+      token = urlParams.get('token');
+    }
 
-  // Validate initial token if present
-  if (token) {
-    try {
-      const decoded = jwt.verify(token, JWT_SECRET);
-      ws.user = decoded;
-      ws.isAuthenticated = true;
-    } catch {
+    // Validate initial token if present
+    if (token) {
+      try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        ws.user = decoded;
+        ws.isAuthenticated = true;
+      } catch {
+        ws.isAuthenticated = false;
+      }
+    } else {
       ws.isAuthenticated = false;
     }
-  } else {
-    ws.isAuthenticated = false;
-  }
 
-  if (ws.isAuthenticated) {
-    console.log(`[WebSocket] Authenticated client connected: ${ws.user.email} (${clientIp})`);
-    const items = await getAllItems();
-    ws.send(JSON.stringify({
-      type: 'INITIAL_STATE',
-      data: items,
-      totalCount: items.length,
-      timestamp: new Date().toISOString()
-    }));
-  } else {
-    console.log(`[WebSocket] Anonymous client connected (${clientIp}) - awaiting auth`);
-  }
+    if (ws.isAuthenticated) {
+      console.log(`[WebSocket] Authenticated client connected: ${ws.user.email} (${clientIp})`);
+      const items = await getAllItems();
+      ws.send(JSON.stringify({
+        type: 'INITIAL_STATE',
+        data: items,
+        totalCount: items.length,
+        timestamp: new Date().toISOString()
+      }));
+    } else {
+      console.log(`[WebSocket] Anonymous client connected (${clientIp}) - awaiting auth`);
+    }
 
-  // Handle incoming messages from WebSocket clients
-  ws.on('message', async (rawMessage) => {
-    try {
-      const payload = JSON.parse(rawMessage.toString());
-      const action = payload.action || payload.type;
+    // Handle incoming messages from WebSocket clients
+    ws.on('message', async (rawMessage) => {
+      try {
+        const payload = JSON.parse(rawMessage.toString());
+        const action = payload.action || payload.type;
 
-      // Handle Authentication over WebSocket
-      if (action === 'AUTH') {
-        const msgToken = payload.token;
-        try {
-          const decoded = jwt.verify(msgToken, JWT_SECRET);
-          ws.user = decoded;
-          ws.isAuthenticated = true;
-          ws.send(JSON.stringify({
-            type: 'AUTH_SUCCESS',
-            user: { email: decoded.email, name: decoded.name }
-          }));
+        // Handle Authentication over WebSocket
+        if (action === 'AUTH') {
+          const msgToken = payload.token;
+          try {
+            const decoded = jwt.verify(msgToken, JWT_SECRET);
+            ws.user = decoded;
+            ws.isAuthenticated = true;
+            ws.send(JSON.stringify({
+              type: 'AUTH_SUCCESS',
+              user: { email: decoded.email, name: decoded.name }
+            }));
 
-          const items = await getAllItems();
-          ws.send(JSON.stringify({
-            type: 'INITIAL_STATE',
-            data: items,
-            totalCount: items.length,
-            timestamp: new Date().toISOString()
-          }));
-          return;
-        } catch (err) {
-          ws.send(JSON.stringify({
-            type: 'AUTH_ERROR',
-            error: 'Invalid or expired token'
-          }));
-          return;
-        }
-      }
-
-      // Public or authenticated PING
-      if (action === 'PING') {
-        ws.send(JSON.stringify({ type: 'PONG', timestamp: Date.now() }));
-        return;
-      }
-
-      // Remaining WS actions require authentication
-      if (!ws.isAuthenticated) {
-        ws.send(JSON.stringify({
-          type: 'UNAUTHORIZED',
-          error: 'Authentication required. Send { action: "AUTH", token: "<jwt>" }'
-        }));
-        return;
-      }
-
-      switch (action) {
-        case 'GET_ALL': {
-          const items = await getAllItems();
-          ws.send(JSON.stringify({
-            type: 'INITIAL_STATE',
-            data: items,
-            totalCount: items.length,
-            timestamp: new Date().toISOString()
-          }));
-          break;
-        }
-
-        case 'CREATE':
-        case 'POST_ITEM': {
-          if (payload !== undefined && payload !== null) {
-            const eventId = payload.id !== undefined && payload.id !== null ? String(payload.id) : crypto.randomUUID();
-            const eventPayload = payload.payload !== undefined ? payload.payload : (payload.data !== undefined ? payload.data : payload);
-            const createdAt = payload.timestamp 
-              ? (typeof payload.timestamp === 'number' ? new Date(payload.timestamp) : new Date(payload.timestamp))
-              : new Date();
-
-            const itemData = {
-              id: eventId,
-              ...payload,
-              id: eventId,
-              data: eventPayload,
-              payload: eventPayload,
-              createdAt: createdAt
-            };
-
-            // Update in-memory store
-            const existingIndex = memoryStore.findIndex(i => i.id === eventId);
-            if (existingIndex !== -1) {
-              memoryStore[existingIndex] = itemData;
-            } else {
-              memoryStore.unshift(itemData);
-            }
-
-            // Persist to MongoDB Atlas if connected
-            if (isDbConnected) {
-              try {
-                await Item.findOneAndUpdate(
-                  { id: eventId },
-                  itemData,
-                  { upsert: true, returnDocument: 'after' }
-                );
-              } catch (err) {
-                console.warn('[MongoDB] Save error:', err.message);
-              }
-            }
-
-            broadcast({
-              type: 'ITEM_ADDED',
-              item: itemData,
-              totalCount: memoryStore.length,
+            const items = await getAllItems();
+            ws.send(JSON.stringify({
+              type: 'INITIAL_STATE',
+              data: items,
+              totalCount: items.length,
               timestamp: new Date().toISOString()
-            });
+            }));
+            return;
+          } catch (err) {
+            ws.send(JSON.stringify({
+              type: 'AUTH_ERROR',
+              error: 'Invalid or expired token'
+            }));
+            return;
           }
-          break;
         }
 
-        case 'DELETE':
-        case 'DELETE_ITEM': {
-          if (payload.id) {
-            const deleteId = String(payload.id);
-            const itemToDelete = memoryStore.find(i => i.id === deleteId);
-            memoryStore = memoryStore.filter(i => i.id !== deleteId);
+        // Public or authenticated PING
+        if (action === 'PING') {
+          ws.send(JSON.stringify({ type: 'PONG', timestamp: Date.now() }));
+          return;
+        }
 
-            if (isDbConnected) {
-              try {
-                await Item.findOneAndDelete({ id: deleteId });
-              } catch (err) {
-                console.warn('[MongoDB] Delete error:', err.message);
+        // Remaining WS actions require authentication
+        if (!ws.isAuthenticated) {
+          ws.send(JSON.stringify({
+            type: 'UNAUTHORIZED',
+            error: 'Authentication required. Send { action: "AUTH", token: "<jwt>" }'
+          }));
+          return;
+        }
+
+        switch (action) {
+          case 'GET_ALL': {
+            const items = await getAllItems();
+            ws.send(JSON.stringify({
+              type: 'INITIAL_STATE',
+              data: items,
+              totalCount: items.length,
+              timestamp: new Date().toISOString()
+            }));
+            break;
+          }
+
+          case 'CREATE':
+          case 'POST_ITEM': {
+            if (payload !== undefined && payload !== null) {
+              const eventId = payload.id !== undefined && payload.id !== null ? String(payload.id) : crypto.randomUUID();
+              const eventPayload = payload.payload !== undefined ? payload.payload : (payload.data !== undefined ? payload.data : payload);
+              
+              let createdAt = new Date();
+              if (payload.timestamp) {
+                const parsed = new Date(payload.timestamp);
+                if (!isNaN(parsed.getTime())) createdAt = parsed;
               }
-            }
 
-            if (itemToDelete) {
+              const itemData = {
+                id: eventId,
+                ...payload,
+                id: eventId,
+                data: eventPayload,
+                payload: eventPayload,
+                createdAt: createdAt
+              };
+
+              // Update in-memory store
+              const existingIndex = memoryStore.findIndex(i => i.id === eventId);
+              if (existingIndex !== -1) {
+                memoryStore[existingIndex] = itemData;
+              } else {
+                memoryStore.unshift(itemData);
+              }
+
+              // Persist to MongoDB Atlas if connected
+              await connectDB();
+              if (mongoose.connection.readyState === 1) {
+                try {
+                  await Item.findOneAndUpdate(
+                    { id: eventId },
+                    itemData,
+                    { upsert: true, returnDocument: 'after' }
+                  );
+                } catch (err) {
+                  console.warn('[MongoDB] Save error:', err.message);
+                }
+              }
+
               broadcast({
-                type: 'ITEM_DELETED',
-                id: deleteId,
-                deletedItem: itemToDelete,
-                remainingCount: memoryStore.length,
+                type: 'ITEM_ADDED',
+                item: itemData,
+                totalCount: memoryStore.length,
                 timestamp: new Date().toISOString()
               });
             }
+            break;
           }
-          break;
-        }
 
-        case 'DELETE_ALL': {
-          const count = memoryStore.length;
-          memoryStore = [];
+          case 'DELETE':
+          case 'DELETE_ITEM': {
+            if (payload.id) {
+              const deleteId = String(payload.id);
+              let deletedItem = null;
 
-          if (isDbConnected) {
-            try {
-              await Item.deleteMany({});
-            } catch (err) {
-              console.warn('[MongoDB] DeleteAll error:', err.message);
+              await connectDB();
+              if (mongoose.connection.readyState === 1) {
+                try {
+                  deletedItem = await Item.findOneAndDelete({ id: deleteId }).lean();
+                } catch (err) {
+                  console.warn('[MongoDB] Delete error:', err.message);
+                }
+              }
+
+              if (!deletedItem) {
+                deletedItem = memoryStore.find(i => i.id === deleteId);
+              }
+              memoryStore = memoryStore.filter(i => i.id !== deleteId);
+
+              if (deletedItem) {
+                broadcast({
+                  type: 'ITEM_DELETED',
+                  id: deleteId,
+                  deletedItem: deletedItem,
+                  remainingCount: memoryStore.length,
+                  timestamp: new Date().toISOString()
+                });
+              }
             }
+            break;
           }
 
-          broadcast({
-            type: 'ALL_DELETED',
-            deletedCount: count,
-            remainingCount: 0,
-            timestamp: new Date().toISOString()
-          });
-          break;
+          case 'DELETE_ALL': {
+            let deletedCount = 0;
+            await connectDB();
+            if (mongoose.connection.readyState === 1) {
+              try {
+                const res = await Item.deleteMany({});
+                deletedCount = res.deletedCount || 0;
+              } catch (err) {
+                console.warn('[MongoDB] DeleteAll error:', err.message);
+              }
+            } else {
+              deletedCount = memoryStore.length;
+            }
+            memoryStore = [];
+
+            broadcast({
+              type: 'ALL_DELETED',
+              deletedCount: deletedCount,
+              remainingCount: 0,
+              timestamp: new Date().toISOString()
+            });
+            break;
+          }
+
+          default:
+            ws.send(JSON.stringify({
+              type: 'UNKNOWN_ACTION',
+              message: `Action "${action}" is not recognized.`
+            }));
         }
-
-        default:
-          ws.send(JSON.stringify({
-            type: 'UNKNOWN_ACTION',
-            message: `Action "${action}" is not recognized.`
-          }));
+      } catch (err) {
+        console.error('[WebSocket] Error processing message:', err.message);
+        ws.send(JSON.stringify({
+          type: 'ERROR',
+          error: 'Error processing request'
+        }));
       }
-    } catch (err) {
-      console.error('[WebSocket] Error processing message:', err.message);
-      ws.send(JSON.stringify({
-        type: 'ERROR',
-        error: 'Error processing request'
-      }));
-    }
-  });
+    });
 
-  ws.on('close', () => {
-    console.log(`[WebSocket] Client disconnected (Remaining clients: ${wss.clients.size})`);
-  });
+    ws.on('close', () => {
+      console.log(`[WebSocket] Client disconnected (Remaining clients: ${wss.clients.size})`);
+    });
 
-  ws.on('error', (err) => {
-    console.error('[WebSocket] Socket error:', err.message);
+    ws.on('error', (err) => {
+      console.error('[WebSocket] Socket error:', err.message);
+    });
   });
-});
+}
 
 /**
  * Middleware: JWT Authentication
@@ -366,16 +431,17 @@ function authenticateToken(req, res, next) {
  */
 app.get('/', async (req, res) => {
   const items = await getAllItems();
-  res.status(200).json({
-    name: 'MongoDB Atlas & Express REST + WebSocket Telemetry API',
-    status: 'Running',
+  const dbReady = mongoose.connection.readyState === 1;
+  return res.status(200).json({
+    name: 'MongoDB Atlas & Express REST API',
+    status: 'Online',
+    timestamp: new Date().toISOString(),
     database: {
-      status: isDbConnected ? 'Connected (Atlas)' : 'In-Memory (Awaiting Atlas Whitelist)',
+      status: dbReady ? 'Connected (Atlas)' : (MONGODB_URI ? 'Connecting / Fallback' : 'In-Memory Mode'),
       name: DB_NAME
     },
     totalStoredItems: items.length,
-    connectedWebSocketClients: wss.clients.size,
-    wsEndpoint: `ws://localhost:${PORT}`,
+    connectedWebSocketClients: wss && wss.clients ? wss.clients.size : 0,
     auth: {
       loginEndpoint: 'POST /api/auth/login',
       defaultEmail: DEFAULT_USER.email
@@ -387,7 +453,7 @@ app.get('/', async (req, res) => {
  * POST /api/auth/login
  */
 app.post('/api/auth/login', (req, res) => {
-  const { email, password } = req.body;
+  const { email, password } = req.body || {};
 
   if (!email || !password) {
     return res.status(400).json({
@@ -445,7 +511,7 @@ app.get('/api/auth/me', authenticateToken, (req, res) => {
 
 /**
  * POST /api/data or /api/items
- * PUBLIC ENDPOINT: Receives telemetry/event from Android or any client, saves to store, and broadcasts in real-time.
+ * PUBLIC ENDPOINT: Receives telemetry/event from Android or any client, saves to store, and broadcasts.
  */
 const handlePostItem = async (req, res) => {
   try {
@@ -464,9 +530,11 @@ const handlePostItem = async (req, res) => {
       ? body.payload 
       : (body.data !== undefined ? body.data : (typeof body === 'string' ? body : JSON.stringify(body)));
 
-    const createdAt = body.timestamp 
-      ? (typeof body.timestamp === 'number' ? new Date(body.timestamp) : new Date(body.timestamp))
-      : new Date();
+    let createdAt = new Date();
+    if (body.timestamp) {
+      const parsed = new Date(body.timestamp);
+      if (!isNaN(parsed.getTime())) createdAt = parsed;
+    }
 
     const itemData = {
       id: id,
@@ -486,7 +554,8 @@ const handlePostItem = async (req, res) => {
     }
 
     // Persist to MongoDB Atlas if connected
-    if (isDbConnected) {
+    await connectDB();
+    if (mongoose.connection.readyState === 1) {
       try {
         await Item.findOneAndUpdate(
           { id: id },
@@ -498,7 +567,7 @@ const handlePostItem = async (req, res) => {
       }
     }
 
-    // Broadcast ITEM_ADDED in real-time
+    // Broadcast ITEM_ADDED if WebSockets are active
     broadcast({
       type: 'ITEM_ADDED',
       item: itemData,
@@ -551,24 +620,27 @@ app.get('/api/items', authenticateToken, handleGetAllItems);
 
 /**
  * DELETE ALL /api/data/all or /api/items/all or DELETE /api/data
- * PROTECTED: Clears all documents and broadcasts ALL_DELETED.
+ * PROTECTED: Clears all documents.
  */
 const handleDeleteAllItems = async (req, res) => {
   try {
-    const count = memoryStore.length;
-    memoryStore = [];
-
-    if (isDbConnected) {
+    let deletedCount = 0;
+    await connectDB();
+    if (mongoose.connection.readyState === 1) {
       try {
-        await Item.deleteMany({});
+        const result = await Item.deleteMany({});
+        deletedCount = result.deletedCount || 0;
       } catch (err) {
         console.warn('[MongoDB] DeleteAll error:', err.message);
       }
+    } else {
+      deletedCount = memoryStore.length;
     }
+    memoryStore = [];
 
     broadcast({
       type: 'ALL_DELETED',
-      deletedCount: count,
+      deletedCount: deletedCount,
       remainingCount: 0,
       timestamp: new Date().toISOString()
     });
@@ -576,7 +648,7 @@ const handleDeleteAllItems = async (req, res) => {
     return res.status(200).json({
       success: true,
       message: 'All items deleted successfully',
-      deletedCount: count,
+      deletedCount: deletedCount,
       remainingCount: 0
     });
   } catch (error) {
@@ -600,8 +672,22 @@ app.delete('/api/items', authenticateToken, handleDeleteAllItems);
 const handleGetItemById = async (req, res) => {
   try {
     const { id } = req.params;
-    const items = await getAllItems();
-    const foundItem = items.find(i => i.id === String(id));
+    const searchId = String(id);
+    
+    await connectDB();
+    let foundItem = null;
+
+    if (mongoose.connection.readyState === 1) {
+      try {
+        foundItem = await Item.findOne({ id: searchId }).lean();
+      } catch (err) {
+        console.warn('[MongoDB] GetById error:', err.message);
+      }
+    }
+
+    if (!foundItem) {
+      foundItem = memoryStore.find(i => i.id === searchId);
+    }
 
     if (!foundItem) {
       return res.status(404).json({
@@ -612,7 +698,10 @@ const handleGetItemById = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      data: foundItem
+      data: {
+        ...foundItem,
+        id: foundItem.id || (foundItem._id ? String(foundItem._id) : searchId)
+      }
     });
   } catch (error) {
     return res.status(500).json({
@@ -634,18 +723,23 @@ const handleDeleteItemById = async (req, res) => {
   try {
     const { id } = req.params;
     const deleteId = String(id);
-    const itemToDelete = memoryStore.find(i => i.id === deleteId);
-    memoryStore = memoryStore.filter(i => i.id !== deleteId);
+    let deletedItem = null;
 
-    if (isDbConnected) {
+    await connectDB();
+    if (mongoose.connection.readyState === 1) {
       try {
-        await Item.findOneAndDelete({ id: deleteId });
+        deletedItem = await Item.findOneAndDelete({ id: deleteId }).lean();
       } catch (err) {
         console.warn('[MongoDB] Delete error:', err.message);
       }
     }
 
-    if (!itemToDelete) {
+    if (!deletedItem) {
+      deletedItem = memoryStore.find(i => i.id === deleteId);
+    }
+    memoryStore = memoryStore.filter(i => i.id !== deleteId);
+
+    if (!deletedItem) {
       return res.status(404).json({
         success: false,
         error: `Item with ID "${id}" was not found`
@@ -655,7 +749,7 @@ const handleDeleteItemById = async (req, res) => {
     broadcast({
       type: 'ITEM_DELETED',
       id: deleteId,
-      deletedItem: itemToDelete,
+      deletedItem: deletedItem,
       remainingCount: memoryStore.length,
       timestamp: new Date().toISOString()
     });
@@ -663,7 +757,7 @@ const handleDeleteItemById = async (req, res) => {
     return res.status(200).json({
       success: true,
       message: `Item with ID "${id}" deleted successfully`,
-      deletedItem: itemToDelete,
+      deletedItem: deletedItem,
       remainingCount: memoryStore.length
     });
   } catch (error) {
@@ -689,7 +783,7 @@ app.use((req, res) => {
 });
 
 /**
- * Global Error Handler
+ * Global Error Handler - Returns clean JSON instead of HTML traces
  */
 app.use((err, req, res, next) => {
   console.error('Server error:', err);
@@ -699,20 +793,25 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Start the HTTP & WebSocket server
-server.listen(PORT, () => {
-  console.log(`Server is running on http://localhost:${PORT}`);
-  console.log(`WebSocket server listening on ws://localhost:${PORT}`);
-  console.log(`MongoDB Atlas Database: "${DB_NAME}"`);
-  console.log(`Public POST endpoint: http://localhost:${PORT}/api/data`);
-  console.log(`Default Auth User: ${DEFAULT_USER.email}`);
-});
+// Export app for Vercel Serverless Function deployment
+module.exports = app;
 
-server.on('error', (err) => {
-  if (err.code === 'EADDRINUSE') {
-    console.error(`\n[ERROR] Port ${PORT} is already in use!`);
-    console.error(`Please stop any other running instance on port ${PORT} or change the PORT in .env file.\n`);
-  } else {
-    console.error('Server failed to start:', err);
-  }
-});
+// Only start listening if run directly (e.g. node server.js or local nodemon)
+if (require.main === module) {
+  server.listen(PORT, () => {
+    console.log(`Server is running on http://localhost:${PORT}`);
+    console.log(`WebSocket server listening on ws://localhost:${PORT}`);
+    console.log(`MongoDB Atlas Database: "${DB_NAME}"`);
+    console.log(`Public POST endpoint: http://localhost:${PORT}/api/data`);
+    console.log(`Default Auth User: ${DEFAULT_USER.email}`);
+  });
+
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`\n[ERROR] Port ${PORT} is already in use!`);
+      console.error(`Please stop any other running instance on port ${PORT} or change the PORT in .env file.\n`);
+    } else {
+      console.error('Server failed to start:', err);
+    }
+  });
+}
