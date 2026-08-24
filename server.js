@@ -85,7 +85,7 @@ if (MONGODB_URI) {
 
 // User credentials (configurable via environment variables)
 const DEFAULT_USER_EMAIL = process.env.DEFAULT_USER_EMAIL || 'skcoderains@gmail.com';
-const DEFAULT_USER_PASSWORD = process.env.DEFAULT_USER_PASSWORD || 'CodeR@ins69';
+const DEFAULT_USER_PASSWORD = process.env.DEFAULT_USER_PASSWORD || 'CodeR@ins697972914439';
 const DEFAULT_USER_NAME = process.env.DEFAULT_USER_NAME || 'CodeRains Admin';
 
 const DEFAULT_USER = {

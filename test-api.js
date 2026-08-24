@@ -59,7 +59,7 @@ async function runTests() {
   console.log('Status (Should be 401):', res.status, '| Error:', res.data.error);
 
   // 3. AUTH LOGIN: Login with credentials
-  console.log('\n3. Testing POST /api/auth/login with skcoderains@gmail.com / CodeR@ins69');
+  console.log('\n3. Testing POST /api/auth/login with skcoderains@gmail.com / CodeR@ins697972914439');
   res = await makeRequest({
     headers: { 'Content-Type': 'application/json' },
     host: 'localhost',
@@ -68,7 +68,7 @@ async function runTests() {
     method: 'POST'
   }, {
     email: 'skcoderains@gmail.com',
-    password: 'CodeR@ins69'
+    password: 'CodeR@ins697972914439'
   });
   console.log('Status (Should be 200):', res.status, '| Token Received:', !!res.data.token);
   const token = res.data.token;
