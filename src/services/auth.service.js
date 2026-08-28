@@ -5,9 +5,17 @@ const { BadRequestError, UnauthorizedError } = require('../errors');
 
 class AuthService {
   /**
-   * Validates user credentials and signs a JWT token
+   * Validates user credentials, API key, and signs a JWT token
    */
-  async login(email, password) {
+  async login(email, password, apiKey) {
+    if (!apiKey) {
+      throw new UnauthorizedError('API key is required. Provide it in the x-api-key header or request body.');
+    }
+
+    if (apiKey !== config.API_KEY) {
+      throw new UnauthorizedError('Invalid API key.');
+    }
+
     if (!email || !password) {
       throw new BadRequestError('Email and password are required.');
     }
@@ -21,6 +29,7 @@ class AuthService {
     if (!isPasswordValid) {
       throw new UnauthorizedError('Invalid email or password.');
     }
+
 
     const token = jwt.sign(
       {

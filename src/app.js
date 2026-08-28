@@ -14,9 +14,10 @@ const app = express();
 app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'x-api-key', 'X-API-Key']
 }));
 app.options('*', cors());
+
 
 // Request parsing middlewares
 app.use(express.json({ limit: '50mb' }));

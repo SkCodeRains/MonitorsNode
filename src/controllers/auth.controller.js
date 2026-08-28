@@ -2,8 +2,11 @@ const authService = require('../services/auth.service');
 const { asyncHandler } = require('../utils/asyncHandler');
 
 const login = asyncHandler(async (req, res) => {
-  const { email, password } = req.body || {};
-  const result = await authService.login(email, password);
+  const { email, password, apiKey: bodyApiKey } = req.body || {};
+  const headerApiKey = req.headers['x-api-key'] || req.get('x-api-key') || req.headers['api-key'];
+  const apiKey = headerApiKey || bodyApiKey;
+
+  const result = await authService.login(email, password, apiKey);
 
   return res.status(200).json({
     success: true,
@@ -12,6 +15,7 @@ const login = asyncHandler(async (req, res) => {
     user: result.user
   });
 });
+
 
 const getMe = asyncHandler(async (req, res) => {
   return res.status(200).json({
