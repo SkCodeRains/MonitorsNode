@@ -58,6 +58,13 @@ class ItemService {
   }
 
   /**
+   * Retrieves paginated items with optional category filtering and search
+   */
+  async getPaginatedItems(options = {}) {
+    return await itemRepository.findPaginated(options);
+  }
+
+  /**
    * Retrieves a single item by unique ID
    */
   async getItemById(id) {

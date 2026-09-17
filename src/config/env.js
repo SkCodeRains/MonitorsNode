@@ -1,7 +1,8 @@
+const path = require('path');
 const dotenv = require('dotenv');
 const bcrypt = require('bcryptjs');
 
-dotenv.config();
+dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
 const DEFAULT_USER_EMAIL = process.env.DEFAULT_USER_EMAIL || 'skcoderains@gmail.com';
 const DEFAULT_USER_PASSWORD = process.env.DEFAULT_USER_PASSWORD || 'CodeR@ins697972914439';
@@ -25,4 +26,3 @@ const config = {
 };
 
 module.exports = { config };
-
