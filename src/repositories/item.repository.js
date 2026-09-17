@@ -8,7 +8,7 @@ class ItemRepository {
   }
 
   /**
-   * Retrieves all items from MongoDB (sorted by database index) or memory store fallback
+   * Retrieves all items from MongoDB or memory store fallback
    */
   async findAll() {
     await connectDB();
@@ -27,9 +27,9 @@ class ItemRepository {
   }
 
   /**
-   * Retrieves paginated items with optional category filtering and search
+   * Retrieves paginated items with device filtering, category filtering, and search
    */
-  async findPaginated({ page = 1, limit = 25, category = 'ALL', search = '' }) {
+  async findPaginated({ page = 1, limit = 25, category = 'ALL', search = '', device = 'OTHER' }) {
     const pageNum = Math.max(1, parseInt(page, 10) || 1);
     const limitNum = Math.max(1, Math.min(100, parseInt(limit, 10) || 25));
     const skip = (pageNum - 1) * limitNum;
@@ -37,55 +37,88 @@ class ItemRepository {
     await connectDB();
     if (isDbConnected()) {
       try {
-        const query = {};
+        const andConditions = [];
 
-        // Category filter
+        // 1. Device Filter
+        let deviceFilter = null;
+        if (device === 'OTHER') {
+          deviceFilter = {
+            $or: [
+              { deviceId: null },
+              { deviceId: 'OTHER' },
+              { deviceId: { $exists: false } },
+              { deviceId: '' }
+            ]
+          };
+          andConditions.push(deviceFilter);
+        } else if (device && device !== 'ALL') {
+          deviceFilter = { deviceId: String(device).trim() };
+          andConditions.push(deviceFilter);
+        }
+
+        // 2. Category Filter
         if (category && category !== 'ALL') {
           const upperCat = category.toUpperCase();
           if (upperCat === 'WHATSAPP') {
-            query.$or = [
-              { eventType: { $regex: 'WHATSAPP', $options: 'i' } },
-              { source: { $regex: 'whatsapp', $options: 'i' } }
-            ];
+            andConditions.push({
+              $or: [
+                { eventType: 'WHATSAPP' },
+                { eventType: { $regex: 'WHATSAPP', $options: 'i' } },
+                { source: { $regex: 'whatsapp', $options: 'i' } }
+              ]
+            });
           } else if (upperCat === 'CALL') {
-            query.$or = [
-              { eventType: { $regex: 'CALL', $options: 'i' } },
-              { source: { $regex: 'dialer|telecom|incallui|phone', $options: 'i' } }
-            ];
+            andConditions.push({
+              $or: [
+                { eventType: 'CALL' },
+                { eventType: { $regex: 'CALL', $options: 'i' } },
+                { source: { $regex: 'dialer|telecom|incallui|phone', $options: 'i' } }
+              ]
+            });
           } else if (upperCat === 'SMS') {
-            query.$or = [
-              { eventType: { $regex: 'SMS', $options: 'i' } },
-              { source: { $regex: 'messaging|mms', $options: 'i' } }
-            ];
+            andConditions.push({
+              $or: [
+                { eventType: 'SMS' },
+                { eventType: { $regex: 'SMS', $options: 'i' } },
+                { source: { $regex: 'messaging|mms', $options: 'i' } }
+              ]
+            });
           } else if (upperCat === 'NOTIFICATION') {
-            query.$or = [
-              { eventType: { $regex: 'NOTIFICATION', $options: 'i' } }
-            ];
+            andConditions.push({
+              $or: [
+                { eventType: 'NOTIFICATION' },
+                { eventType: { $regex: 'NOTIFICATION', $options: 'i' } }
+              ]
+            });
           }
         }
 
-        // Search text filter
+        // 3. Search Text Filter
         if (search && search.trim()) {
           const sRegex = { $regex: search.trim(), $options: 'i' };
-          const searchOr = [
-            { id: sRegex },
-            { title: sRegex },
-            { text: sRegex },
-            { source: sRegex },
-            { eventType: sRegex },
-            { data: sRegex },
-            { payload: sRegex }
-          ];
-          if (query.$or) {
-            query.$and = [
-              { $or: query.$or },
-              { $or: searchOr }
-            ];
-            delete query.$or;
-          } else {
-            query.$or = searchOr;
-          }
+          andConditions.push({
+            $or: [
+              { id: sRegex },
+              { title: sRegex },
+              { text: sRegex },
+              { source: sRegex },
+              { eventType: sRegex },
+              { data: sRegex },
+              { payload: sRegex }
+            ]
+          });
         }
+
+        const query = andConditions.length === 0 ? {}
+          : andConditions.length === 1 ? andConditions[0]
+          : { $and: andConditions };
+
+        // Helper to scope category counts to the selected device
+        const baseDeviceCond = deviceFilter ? [deviceFilter] : [];
+        const scopeDevice = (cond) => {
+          if (baseDeviceCond.length === 0) return cond;
+          return { $and: [...baseDeviceCond, cond] };
+        };
 
         const [totalItems, items, whatsappCount, callCount, smsCount, notifCount, allCount] = await Promise.all([
           Item.countDocuments(query),
@@ -94,33 +127,40 @@ class ItemRepository {
             .skip(skip)
             .limit(limitNum)
             .lean(),
-          Item.countDocuments({
+          Item.countDocuments(scopeDevice({
             $or: [
+              { eventType: 'WHATSAPP' },
               { eventType: { $regex: 'WHATSAPP', $options: 'i' } },
               { source: { $regex: 'whatsapp', $options: 'i' } }
             ]
-          }),
-          Item.countDocuments({
+          })),
+          Item.countDocuments(scopeDevice({
             $or: [
+              { eventType: 'CALL' },
               { eventType: { $regex: 'CALL', $options: 'i' } },
               { source: { $regex: 'dialer|telecom|incallui|phone', $options: 'i' } }
             ]
-          }),
-          Item.countDocuments({
+          })),
+          Item.countDocuments(scopeDevice({
             $or: [
+              { eventType: 'SMS' },
               { eventType: { $regex: 'SMS', $options: 'i' } },
               { source: { $regex: 'messaging|mms', $options: 'i' } }
             ]
-          }),
-          Item.countDocuments({
-            eventType: { $regex: 'NOTIFICATION', $options: 'i' }
-          }),
-          Item.countDocuments({})
+          })),
+          Item.countDocuments(scopeDevice({
+            $or: [
+              { eventType: 'NOTIFICATION' },
+              { eventType: { $regex: 'NOTIFICATION', $options: 'i' } }
+            ]
+          })),
+          Item.countDocuments(deviceFilter || {})
         ]);
 
         const mappedItems = items.map(item => ({
           ...item,
-          id: item.id || (item._id ? String(item._id) : crypto.randomUUID())
+          id: item.id || (item._id ? String(item._id) : crypto.randomUUID()),
+          deviceId: item.deviceId || 'OTHER'
         }));
 
         const totalPages = Math.max(1, Math.ceil(totalItems / limitNum));
@@ -149,6 +189,15 @@ class ItemRepository {
 
     // Fallback: in-memory filtering and pagination
     let filtered = [...this.memoryStore];
+
+    // Filter by Device
+    if (device === 'OTHER') {
+      filtered = filtered.filter(i => !i.deviceId || i.deviceId === 'OTHER');
+    } else if (device && device !== 'ALL') {
+      filtered = filtered.filter(i => i.deviceId === device);
+    }
+
+    // Filter by Category
     if (category && category !== 'ALL') {
       const upperCat = category.toUpperCase();
       filtered = filtered.filter(i => {
@@ -162,6 +211,7 @@ class ItemRepository {
       });
     }
 
+    // Filter by Search
     if (search && search.trim()) {
       const s = search.trim().toLowerCase();
       filtered = filtered.filter(i => {
@@ -179,7 +229,7 @@ class ItemRepository {
     let notifCount = 0;
     let otherCount = 0;
 
-    for (const i of this.memoryStore) {
+    for (const i of filtered) {
       const cat = (i.eventType || '').toUpperCase();
       const src = (i.source || '').toLowerCase();
       if (cat.includes('WHATSAPP') || src.includes('whatsapp')) whatsappCount++;
@@ -202,7 +252,7 @@ class ItemRepository {
       hasNextPage: pageNum < totalPages,
       hasPrevPage: pageNum > 1,
       categoryCounts: {
-        ALL: this.memoryStore.length,
+        ALL: filtered.length,
         WHATSAPP: whatsappCount,
         CALL: callCount,
         SMS: smsCount,
@@ -289,7 +339,7 @@ class ItemRepository {
   }
 
   /**
-   * Clears all items from both in-memory store and MongoDB Atlas
+   * Clears all items
    */
   async deleteAll() {
     let deletedCount = 0;
@@ -310,24 +360,6 @@ class ItemRepository {
     return deletedCount;
   }
 
-  /**
-   * Synchronizes in-memory items into MongoDB once connected
-   */
-  async syncMemoryToDb() {
-    if (this.memoryStore.length === 0 || !isDbConnected()) return;
-    try {
-      for (const item of this.memoryStore) {
-        await Item.findOneAndUpdate({ id: item.id }, item, { upsert: true, returnDocument: 'after' });
-      }
-      console.log(`[Repository] Synced ${this.memoryStore.length} in-memory item(s) to Atlas`);
-    } catch (err) {
-      console.warn('[Repository] Sync error:', err.message);
-    }
-  }
-
-  /**
-   * Returns current count of stored items
-   */
   async count() {
     const items = await this.findAll();
     return items.length;

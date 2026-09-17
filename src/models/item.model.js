@@ -8,6 +8,15 @@ const itemSchema = new mongoose.Schema(
       unique: true,
       index: true
     },
+    deviceId: {
+      type: String,
+      default: null,
+      index: true
+    },
+    deviceName: {
+      type: String,
+      default: null
+    },
     eventType: {
       type: String,
       default: 'GENERIC',
@@ -39,7 +48,7 @@ const itemSchema = new mongoose.Schema(
   },
   {
     timestamps: true,
-    strict: false, // Allows arbitrary custom properties sent by telemetry/Android callers
+    strict: false,
     toJSON: {
       transform: (doc, ret) => {
         delete ret._id;
@@ -56,6 +65,10 @@ const itemSchema = new mongoose.Schema(
     }
   }
 );
+
+// High-Performance Compound Indexes for Device and Channel Filtering
+itemSchema.index({ deviceId: 1, createdAt: -1 });
+itemSchema.index({ deviceId: 1, eventType: 1, createdAt: -1 });
 
 const Item = mongoose.models.Item || mongoose.model('Item', itemSchema);
 
