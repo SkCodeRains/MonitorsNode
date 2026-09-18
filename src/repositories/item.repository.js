@@ -14,7 +14,7 @@ class ItemRepository {
     await connectDB();
     if (isDbConnected()) {
       try {
-        const items = await Item.find().sort({ createdAt: -1 }).lean();
+        const items = await Item.find().sort({ updatedAt: -1, createdAt: -1 }).lean();
         return items.map(item => ({
           ...item,
           id: item.id || (item._id ? String(item._id) : crypto.randomUUID())
@@ -123,7 +123,7 @@ class ItemRepository {
         const [totalItems, items, whatsappCount, callCount, smsCount, notifCount, allCount] = await Promise.all([
           Item.countDocuments(query),
           Item.find(query)
-            .sort({ createdAt: -1 })
+            .sort({ updatedAt: -1, createdAt: -1 })
             .skip(skip)
             .limit(limitNum)
             .lean(),

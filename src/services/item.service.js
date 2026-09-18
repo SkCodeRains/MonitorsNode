@@ -19,10 +19,14 @@ class ItemService {
     let id;
     if (body.id !== undefined && body.id !== null && String(body.id).trim() !== '') {
       const rawId = String(body.id).trim();
-      if (rawId.startsWith(`${devicePrefix}_`)) {
+      const parts = rawId.split('_');
+      // If rawId already has timestamp suffix (e.g. dev_logId_timestamp), keep it
+      if (rawId.startsWith(`${devicePrefix}_`) && parts.length >= 3) {
         id = rawId;
       } else {
-        id = `${devicePrefix}_${rawId}`;
+        const cleanRaw = rawId.startsWith(`${devicePrefix}_`) ? rawId.replace(`${devicePrefix}_`, '') : rawId;
+        const tsSuffix = body.timestamp ? `_${body.timestamp}` : `_${Date.now()}`;
+        id = `${devicePrefix}_${cleanRaw}${tsSuffix}`;
       }
     } else {
       id = `${devicePrefix}_${Date.now()}_${crypto.randomUUID()}`;
