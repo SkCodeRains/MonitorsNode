@@ -302,8 +302,14 @@ class ItemRepository {
       try {
         await Item.findOneAndUpdate(
           { id: itemData.id },
-          itemData,
-          { upsert: true, returnDocument: 'after' }
+          {
+            $set: {
+              ...itemData,
+              createdAt: itemData.createdAt || new Date(),
+              updatedAt: new Date()
+            }
+          },
+          { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
         );
       } catch (err) {
         console.warn('[Repository] MongoDB save error:', err.message);

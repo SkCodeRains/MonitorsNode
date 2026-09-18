@@ -12,7 +12,21 @@ class ItemService {
       throw new BadRequestError('Request body cannot be empty.');
     }
 
-    const id = body.id !== undefined && body.id !== null ? String(body.id) : crypto.randomUUID();
+    const devicePrefix = (body.deviceId && String(body.deviceId).trim())
+      ? String(body.deviceId).trim().toLowerCase().replace(/[^a-z0-9_]/g, '_')
+      : 'OTHER';
+
+    let id;
+    if (body.id !== undefined && body.id !== null && String(body.id).trim() !== '') {
+      const rawId = String(body.id).trim();
+      if (rawId.startsWith(`${devicePrefix}_`)) {
+        id = rawId;
+      } else {
+        id = `${devicePrefix}_${rawId}`;
+      }
+    } else {
+      id = `${devicePrefix}_${Date.now()}_${crypto.randomUUID()}`;
+    }
 
     const payloadContent = body.payload !== undefined
       ? body.payload
@@ -20,14 +34,17 @@ class ItemService {
 
     let createdAt = new Date();
     if (body.timestamp) {
-      const parsed = new Date(body.timestamp);
+      const numTimestamp = Number(body.timestamp);
+      const parsed = !isNaN(numTimestamp) && numTimestamp > 0 ? new Date(numTimestamp) : new Date(body.timestamp);
       if (!isNaN(parsed.getTime())) createdAt = parsed;
     }
 
     const itemData = {
-      id: id,
       ...body,
       id: id,
+      clientLogId: body.id ? String(body.id) : null,
+      deviceId: body.deviceId || null,
+      deviceName: body.deviceName || null,
       data: payloadContent,
       payload: payloadContent,
       createdAt: createdAt
