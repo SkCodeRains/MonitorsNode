@@ -1,11 +1,9 @@
 const express = require('express');
-const deviceController = require('../controllers/device.controller');
-const { authenticateToken } = require('../middlewares/auth.middleware');
-const { validateApiKey } = require('../middlewares/apiKey.middleware');
-
 const router = express.Router();
+const deviceController = require('../controllers/device.controller');
 
-// Protected endpoint to retrieve device list (used by Frontend)
-router.get('/', validateApiKey, authenticateToken, deviceController.getDevices);
+router.get('/', deviceController.getDevices);
+router.post('/:deviceId/data-usage', deviceController.updateDataUsage);
+router.post('/:deviceId/app-usage', deviceController.updateAppUsage);
 
 module.exports = router;

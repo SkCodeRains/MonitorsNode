@@ -17,7 +17,14 @@ class DeviceRepository {
       osVersion: '',
       firstSeen: new Date(),
       lastSeen: new Date(),
-      totalCount: 0
+      totalCount: 0,
+      dataUsage: {
+        mobileBytes: 0,
+        wifiBytes: 0,
+        totalBytes: 0,
+        lastUpdated: null
+      },
+      appUsage: []
     });
   }
 
@@ -41,7 +48,14 @@ class DeviceRepository {
             osVersion: d.osVersion || '',
             firstSeen: d.firstSeen || new Date(),
             lastSeen: d.lastSeen || new Date(),
-            totalCount: d.totalCount || 0
+            totalCount: d.totalCount || 0,
+            dataUsage: d.dataUsage || {
+              mobileBytes: 0,
+              wifiBytes: 0,
+              totalBytes: 0,
+              lastUpdated: null
+            },
+            appUsage: d.appUsage || []
           });
         }
 
@@ -73,7 +87,6 @@ class DeviceRepository {
   async getAllDevices() {
     await this.init();
 
-    // Re-verify OTHER count in real-time or from cache
     const devicesList = [];
     const other = this.deviceCache.get('OTHER');
     if (other) {
@@ -139,7 +152,14 @@ class DeviceRepository {
       osVersion: meta.osVersion || '',
       firstSeen: new Date(),
       lastSeen: new Date(),
-      totalCount: 1
+      totalCount: 1,
+      dataUsage: {
+        mobileBytes: 0,
+        wifiBytes: 0,
+        totalBytes: 0,
+        lastUpdated: null
+      },
+      appUsage: []
     };
 
     this.deviceCache.set(cleanId, newDevice);
@@ -153,6 +173,74 @@ class DeviceRepository {
     ).exec().catch(err => console.warn('[DeviceRepository] Auto-register DB error:', err.message));
 
     return newDevice;
+  }
+
+  /**
+   * Updates per-day data usage for a device
+   */
+  async updateDataUsage(deviceId, { mobileBytes = 0, wifiBytes = 0, totalBytes = 0, timestamp = null }) {
+    await this.init();
+
+    const cleanId = String(deviceId).trim().toLowerCase().replace(/[^a-z0-9_]/g, '_');
+    const lastUpdated = timestamp ? new Date(timestamp) : new Date();
+    const usageData = {
+      mobileBytes: Number(mobileBytes) || 0,
+      wifiBytes: Number(wifiBytes) || 0,
+      totalBytes: Number(totalBytes) || ((Number(mobileBytes) || 0) + (Number(wifiBytes) || 0)),
+      lastUpdated
+    };
+
+    let device = this.deviceCache.get(cleanId);
+    if (!device) {
+      device = await this.registerOrTouch(cleanId, cleanId);
+    }
+
+    if (device) {
+      device.dataUsage = usageData;
+      device.lastSeen = new Date();
+    }
+
+    // Persist to MongoDB
+    Device.updateOne(
+      { deviceId: cleanId },
+      { $set: { dataUsage: usageData, lastSeen: new Date() } }
+    ).exec().catch(err => console.warn('[DeviceRepository] Data usage DB update error:', err.message));
+
+    return device;
+  }
+
+  /**
+   * Updates daily app usage timing for a device
+   */
+  async updateAppUsage(deviceId, appList = []) {
+    await this.init();
+
+    const cleanId = String(deviceId).trim().toLowerCase().replace(/[^a-z0-9_]/g, '_');
+    const sanitizedApps = Array.isArray(appList) ? appList.map(a => ({
+      packageName: String(a.packageName || '').trim(),
+      appName: String(a.appName || a.packageName || 'Unknown').trim(),
+      foregroundTimeMs: Number(a.foregroundTimeMs) || 0,
+      serviceRunningTimeMs: Number(a.serviceRunningTimeMs) || 0,
+      lastTimeUsed: a.lastTimeUsed ? new Date(a.lastTimeUsed) : new Date()
+    })) : [];
+
+    let device = this.deviceCache.get(cleanId);
+    if (!device) {
+      device = await this.registerOrTouch(cleanId, cleanId);
+    }
+
+    if (device) {
+      device.appUsage = sanitizedApps;
+      device.lastSeen = new Date();
+    }
+
+    // Persist to MongoDB
+    Device.updateOne(
+      { deviceId: cleanId },
+      { $set: { appUsage: sanitizedApps, lastSeen: new Date() } }
+    ).exec().catch(err => console.warn('[DeviceRepository] App usage DB update error:', err.message));
+
+    return device;
   }
 }
 

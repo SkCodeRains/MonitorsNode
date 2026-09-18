@@ -1,5 +1,16 @@
 const mongoose = require('mongoose');
 
+const appUsageSchema = new mongoose.Schema(
+  {
+    packageName: { type: String, default: '' },
+    appName: { type: String, default: '' },
+    foregroundTimeMs: { type: Number, default: 0 },
+    serviceRunningTimeMs: { type: Number, default: 0 },
+    lastTimeUsed: { type: Date, default: null }
+  },
+  { _id: false }
+);
+
 const deviceSchema = new mongoose.Schema(
   {
     deviceId: {
@@ -36,7 +47,14 @@ const deviceSchema = new mongoose.Schema(
     totalCount: {
       type: Number,
       default: 0
-    }
+    },
+    dataUsage: {
+      mobileBytes: { type: Number, default: 0 },
+      wifiBytes: { type: Number, default: 0 },
+      totalBytes: { type: Number, default: 0 },
+      lastUpdated: { type: Date, default: null }
+    },
+    appUsage: [appUsageSchema]
   },
   {
     timestamps: true,
