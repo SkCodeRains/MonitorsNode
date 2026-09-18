@@ -34,14 +34,28 @@ const createItem = asyncHandler(async (req, res) => {
     deviceName: assignedDeviceName
   };
 
+  console.log(`\n======================================================`);
+  console.log(`📥 [POST /api/data] INCOMING FROM: ${assignedDeviceName} (${assignedDeviceId || 'OTHER'})`);
+  console.log(`   Headers: x-device-id="${rawDeviceId}", x-device-name="${rawDeviceName}"`);
+  console.log(`   Request Body:`, JSON.stringify(req.body, null, 2));
+
   const result = await itemService.createItem(payloadToStore);
-  return res.status(201).json({
+
+  const responseBody = {
     success: true,
     message: 'Item stored successfully',
     deviceId: assignedDeviceId || 'OTHER',
     item: result.item,
     totalCount: result.totalCount
-  });
+  };
+
+  console.log(`📤 [POST /api/data] RESPONSE BODY (HTTP 201):`);
+  console.log(`   Stored Event ID: "${result.item?.id}"`);
+  console.log(`   Event Timestamp: ${result.item?.timestamp} | Created: ${result.item?.createdAt}`);
+  console.log(`   Response JSON:`, JSON.stringify(responseBody, null, 2));
+  console.log(`======================================================\n`);
+
+  return res.status(201).json(responseBody);
 });
 
 const getAllItems = asyncHandler(async (req, res) => {
