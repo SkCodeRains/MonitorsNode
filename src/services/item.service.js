@@ -75,6 +75,9 @@ class ItemService {
     };
 
     const savedItem = await itemRepository.save(itemData);
+    if (itemData.deviceId) {
+      await deviceRepository.registerOrTouch(itemData.deviceId, itemData.deviceName);
+    }
     const totalCount = itemRepository.memoryStore.length;
 
     return {

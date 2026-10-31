@@ -83,10 +83,48 @@ class DeviceRepository {
   }
 
   /**
-   * Returns all active devices with OTHER permanently as the first tab
+   * Returns all active devices with live updated item counts
    */
   async getAllDevices() {
     await this.init();
+
+    // Dynamically update live counts from MongoDB so counts are never stale
+    try {
+      if (isDbConnected()) {
+        const counts = await Item.aggregate([
+          {
+            $group: {
+              _id: '$deviceId',
+              count: { $sum: 1 }
+            }
+          }
+        ]);
+
+        const countMap = new Map();
+        let otherTotal = 0;
+        for (const c of counts) {
+          if (!c._id || c._id === 'OTHER') {
+            otherTotal += c.count;
+          } else {
+            countMap.set(String(c._id).trim().toLowerCase(), c.count);
+          }
+        }
+
+        const other = this.deviceCache.get('OTHER');
+        if (other) {
+          other.totalCount = otherTotal;
+        }
+
+        for (const [key, val] of this.deviceCache.entries()) {
+          if (key !== 'OTHER') {
+            const cleanKey = String(key).trim().toLowerCase();
+            val.totalCount = countMap.get(cleanKey) || 0;
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[DeviceRepository] Failed to refresh live device counts:', err.message);
+    }
 
     const devicesList = [];
     const other = this.deviceCache.get('OTHER');
