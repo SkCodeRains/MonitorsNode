@@ -1,5 +1,4 @@
 const http = require('http');
-const { WebSocket } = require('ws');
 
 const API_KEY = 'CR-MONITOR-KEY-2026-X99';
 
@@ -27,7 +26,7 @@ function makeRequest(options, postData) {
 }
 
 async function runTests() {
-  console.log('=== Starting API, Auth, x-api-key & WebSocket Verification Tests ===');
+  console.log('=== Starting API, Auth, x-api-key Verification Tests ===');
 
   // 1. PUBLIC POST: Android event without any auth or api key headers
   console.log('\n1. Testing PUBLIC POST /api/data without Auth token & without x-api-key (e.g. from Android app)');
@@ -173,35 +172,7 @@ async function runTests() {
   });
   console.log('Status (Should be 200):', res.status, '| User:', res.data.user?.email);
 
-  // 11. PROTECTED DELETE: Delete item with Bearer token and x-api-key
-  console.log('\n11. Testing PROTECTED DELETE /api/data/3 with Bearer token and x-api-key');
-  res = await makeRequest({
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'x-api-key': API_KEY
-    },
-    host: 'localhost',
-    port: 5000,
-    path: '/api/data/3',
-    method: 'DELETE'
-  });
-  console.log('Status (Should be 200):', res.status, '| Deleted Item ID:', res.data.deletedItem?.id);
-
-  // 12. PROTECTED DELETE ALL: Clear store with Bearer token and x-api-key
-  console.log('\n12. Testing PROTECTED DELETE /api/data/all with Bearer token and x-api-key');
-  res = await makeRequest({
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'x-api-key': API_KEY
-    },
-    host: 'localhost',
-    port: 5000,
-    path: '/api/data/all',
-    method: 'DELETE'
-  });
-  console.log('Status (Should be 200):', res.status, '| Remaining Count:', res.data.remainingCount);
-
-  console.log('\n=== All Authentication, x-api-key, Public POST, and Protected Routes verified successfully! ===');
+  console.log('\n=== All Authentication, x-api-key, and Public POST verified successfully! (Destructive DELETE disabled) ===');
 }
 
 runTests().catch(err => {

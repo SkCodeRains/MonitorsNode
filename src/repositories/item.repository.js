@@ -14,7 +14,7 @@ class ItemRepository {
     await connectDB();
     if (isDbConnected()) {
       try {
-        const items = await Item.find().sort({ updatedAt: -1, createdAt: -1 }).lean();
+        const items = await Item.find().sort({ createdAt: -1, _id: -1 }).lean();
         return items.map(item => ({
           ...item,
           id: item.id || (item._id ? String(item._id) : crypto.randomUUID())
@@ -111,7 +111,7 @@ class ItemRepository {
 
         const query = andConditions.length === 0 ? {}
           : andConditions.length === 1 ? andConditions[0]
-          : { $and: andConditions };
+            : { $and: andConditions };
 
         // Helper to scope category counts to the selected device
         const baseDeviceCond = deviceFilter ? [deviceFilter] : [];
@@ -123,7 +123,7 @@ class ItemRepository {
         const [totalItems, items, whatsappCount, callCount, smsCount, notifCount, allCount] = await Promise.all([
           Item.countDocuments(query),
           Item.find(query)
-            .sort({ updatedAt: -1, createdAt: -1 })
+            .sort({ createdAt: -1, _id: -1 })
             .skip(skip)
             .limit(limitNum)
             .lean(),
@@ -216,10 +216,10 @@ class ItemRepository {
       const s = search.trim().toLowerCase();
       filtered = filtered.filter(i => {
         return (i.id && i.id.toLowerCase().includes(s)) ||
-               (i.title && i.title.toLowerCase().includes(s)) ||
-               (i.text && i.text.toLowerCase().includes(s)) ||
-               (i.source && i.source.toLowerCase().includes(s)) ||
-               (i.eventType && i.eventType.toLowerCase().includes(s));
+          (i.title && i.title.toLowerCase().includes(s)) ||
+          (i.text && i.text.toLowerCase().includes(s)) ||
+          (i.source && i.source.toLowerCase().includes(s)) ||
+          (i.eventType && i.eventType.toLowerCase().includes(s));
       });
     }
 
@@ -238,6 +238,8 @@ class ItemRepository {
       else if (cat.includes('NOTIFICATION')) notifCount++;
       else otherCount++;
     }
+
+    filtered.sort((a, b) => new Date(b.createdAt || b.timestamp || 0) - new Date(a.createdAt || a.timestamp || 0));
 
     const totalItems = filtered.length;
     const totalPages = Math.max(1, Math.ceil(totalItems / limitNum));
@@ -295,6 +297,7 @@ class ItemRepository {
       this.memoryStore[existingIndex] = itemData;
     } else {
       this.memoryStore.unshift(itemData);
+      this.memoryStore.sort((a, b) => new Date(b.createdAt || b.timestamp || 0) - new Date(a.createdAt || a.timestamp || 0));
     }
 
     await connectDB();
@@ -309,7 +312,7 @@ class ItemRepository {
               updatedAt: new Date()
             }
           },
-          { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
+          { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true, timestamps: false }
         );
       } catch (err) {
         console.warn('[Repository] MongoDB save error:', err.message);
@@ -345,24 +348,55 @@ class ItemRepository {
   }
 
   /**
-   * Clears all items
+   * Clears items: optionally scoped to a specific device, or all items
    */
-  async deleteAll() {
+  async deleteAll(device = null) {
     let deletedCount = 0;
+    const isSpecificDevice = device && device !== 'ALL';
 
     await connectDB();
     if (isDbConnected()) {
       try {
-        const result = await Item.deleteMany({});
+        let filter = {};
+        if (isSpecificDevice) {
+          if (device === 'OTHER') {
+            filter = {
+              $or: [
+                { deviceId: null },
+                { deviceId: 'OTHER' },
+                { deviceId: { $exists: false } },
+                { deviceId: '' }
+              ]
+            };
+          } else {
+            filter = { deviceId: String(device).trim() };
+          }
+        }
+        const result = await Item.deleteMany(filter);
         deletedCount = result.deletedCount || 0;
       } catch (err) {
         console.warn('[Repository] MongoDB deleteAll error:', err.message);
       }
-    } else {
-      deletedCount = this.memoryStore.length;
     }
 
-    this.memoryStore = [];
+    if (isSpecificDevice) {
+      const beforeCount = this.memoryStore.length;
+      if (device === 'OTHER') {
+        this.memoryStore = this.memoryStore.filter(i => i.deviceId && i.deviceId !== 'OTHER');
+      } else {
+        const cleanDev = String(device).trim();
+        this.memoryStore = this.memoryStore.filter(i => i.deviceId !== cleanDev);
+      }
+      if (!isDbConnected()) {
+        deletedCount = beforeCount - this.memoryStore.length;
+      }
+    } else {
+      if (!isDbConnected()) {
+        deletedCount = this.memoryStore.length;
+      }
+      this.memoryStore = [];
+    }
+
     return deletedCount;
   }
 

@@ -1,7 +1,6 @@
 const { isDbConnected } = require('../config/db');
 const { config } = require('../config/env');
 const itemRepository = require('../repositories/item.repository');
-const websocketService = require('../services/websocket.service');
 const { asyncHandler } = require('../utils/asyncHandler');
 
 const getHealthStatus = asyncHandler(async (req, res) => {
@@ -17,7 +16,6 @@ const getHealthStatus = asyncHandler(async (req, res) => {
       name: config.DB_NAME
     },
     totalStoredItems,
-    connectedWebSocketClients: websocketService.getConnectedClientCount(),
     auth: {
       loginEndpoint: 'POST /api/auth/login',
       defaultEmail: config.DEFAULT_USER.email

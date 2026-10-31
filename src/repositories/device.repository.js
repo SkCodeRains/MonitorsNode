@@ -39,6 +39,7 @@ class DeviceRepository {
       if (isDbConnected()) {
         const devices = await Device.find().sort({ lastSeen: -1 }).lean();
         for (const d of devices) {
+          const deviceCount = await Item.countDocuments({ deviceId: d.deviceId });
           this.deviceCache.set(d.deviceId, {
             id: d.deviceId,
             deviceId: d.deviceId,
@@ -48,7 +49,7 @@ class DeviceRepository {
             osVersion: d.osVersion || '',
             firstSeen: d.firstSeen || new Date(),
             lastSeen: d.lastSeen || new Date(),
-            totalCount: d.totalCount || 0,
+            totalCount: deviceCount,
             dataUsage: d.dataUsage || {
               mobileBytes: 0,
               wifiBytes: 0,
@@ -130,14 +131,18 @@ class DeviceRepository {
         existing.name = cleanName;
       }
 
-      // Background non-blocking DB touch
-      Device.updateOne(
-        { deviceId: cleanId },
-        {
-          $set: { lastSeen: new Date(), ...(cleanName && { name: cleanName }) },
-          $inc: { totalCount: 1 }
-        }
-      ).exec().catch(err => console.warn('[DeviceRepository] Touch DB error:', err.message));
+      // Background DB touch
+      try {
+        await Device.updateOne(
+          { deviceId: cleanId },
+          {
+            $set: { lastSeen: new Date(), ...(cleanName && { name: cleanName }) },
+            $inc: { totalCount: 1 }
+          }
+        );
+      } catch (err) {
+        console.warn('[DeviceRepository] Touch DB error:', err.message);
+      }
 
       return existing;
     }
@@ -165,12 +170,16 @@ class DeviceRepository {
     this.deviceCache.set(cleanId, newDevice);
     console.log(`[DeviceRepository] Auto-registered brand new device in RAM: "${cleanName}" (${cleanId})`);
 
-    // Asynchronously save to MongoDB
-    Device.findOneAndUpdate(
-      { deviceId: cleanId },
-      newDevice,
-      { upsert: true, returnDocument: 'after' }
-    ).exec().catch(err => console.warn('[DeviceRepository] Auto-register DB error:', err.message));
+    // Save to MongoDB
+    try {
+      await Device.findOneAndUpdate(
+        { deviceId: cleanId },
+        newDevice,
+        { upsert: true, returnDocument: 'after' }
+      );
+    } catch (err) {
+      console.warn('[DeviceRepository] Auto-register DB error:', err.message);
+    }
 
     return newDevice;
   }
@@ -201,10 +210,14 @@ class DeviceRepository {
     }
 
     // Persist to MongoDB
-    Device.updateOne(
-      { deviceId: cleanId },
-      { $set: { dataUsage: usageData, lastSeen: new Date() } }
-    ).exec().catch(err => console.warn('[DeviceRepository] Data usage DB update error:', err.message));
+    try {
+      await Device.updateOne(
+        { deviceId: cleanId },
+        { $set: { dataUsage: usageData, lastSeen: new Date() } }
+      );
+    } catch (err) {
+      console.warn('[DeviceRepository] Data usage DB update error:', err.message);
+    }
 
     return device;
   }
@@ -235,12 +248,112 @@ class DeviceRepository {
     }
 
     // Persist to MongoDB
-    Device.updateOne(
-      { deviceId: cleanId },
-      { $set: { appUsage: sanitizedApps, lastSeen: new Date() } }
-    ).exec().catch(err => console.warn('[DeviceRepository] App usage DB update error:', err.message));
+    try {
+      await Device.updateOne(
+        { deviceId: cleanId },
+        { $set: { appUsage: sanitizedApps, lastSeen: new Date() } }
+      );
+    } catch (err) {
+      console.warn('[DeviceRepository] App usage DB update error:', err.message);
+    }
 
     return device;
+  }
+
+  /**
+   * Resets totalCount for a specific device (e.g. after deleting its items)
+   */
+  async resetDeviceCount(deviceId) {
+    await this.init();
+    const cleanId = (!deviceId || deviceId === 'OTHER')
+      ? 'OTHER'
+      : String(deviceId).trim().toLowerCase().replace(/[^a-z0-9_]/g, '_');
+
+    const entry = this.deviceCache.get(cleanId);
+    if (entry) {
+      entry.totalCount = 0;
+    }
+
+    if (cleanId !== 'OTHER') {
+      Device.updateOne({ deviceId: cleanId }, { $set: { totalCount: 0 } })
+        .exec()
+        .catch(err => console.warn('[DeviceRepository] Reset device count DB error:', err.message));
+    }
+  }
+
+  /**
+   * Resets totalCount for all devices to 0
+   */
+  async resetAllDeviceCounts() {
+    await this.init();
+    for (const [, val] of this.deviceCache.entries()) {
+      val.totalCount = 0;
+    }
+
+    Device.updateMany({}, { $set: { totalCount: 0 } })
+      .exec()
+      .catch(err => console.warn('[DeviceRepository] Reset all device counts DB error:', err.message));
+  }
+
+  /**
+   * Decrements device totalCount by a given amount (default 1)
+   */
+  async decrementDeviceCount(deviceId, amount = 1) {
+    await this.init();
+    const cleanId = (!deviceId || deviceId === 'OTHER')
+      ? 'OTHER'
+      : String(deviceId).trim().toLowerCase().replace(/[^a-z0-9_]/g, '_');
+
+    const entry = this.deviceCache.get(cleanId);
+    if (entry) {
+      entry.totalCount = Math.max(0, (entry.totalCount || 0) - amount);
+    }
+
+    if (cleanId !== 'OTHER') {
+      Device.updateOne(
+        { deviceId: cleanId },
+        [
+          {
+            $set: {
+              totalCount: {
+                $max: [0, { $subtract: [{ $ifNull: ['$totalCount', 0] }, amount] }]
+              }
+            }
+          }
+        ]
+      ).exec().catch(err => console.warn('[DeviceRepository] Decrement DB error:', err.message));
+    }
+  }
+
+  /**
+   * Synchronizes all device totalCounts against real Item documents in MongoDB
+   */
+  async syncAllDeviceCounts() {
+    try {
+      await connectDB();
+      if (isDbConnected()) {
+        const otherCount = await Item.countDocuments({
+          $or: [
+            { deviceId: null },
+            { deviceId: 'OTHER' },
+            { deviceId: { $exists: false } },
+            { deviceId: '' }
+          ]
+        });
+        const otherEntry = this.deviceCache.get('OTHER');
+        if (otherEntry) otherEntry.totalCount = otherCount;
+
+        for (const [key, val] of this.deviceCache.entries()) {
+          if (key !== 'OTHER') {
+            const count = await Item.countDocuments({ deviceId: key });
+            val.totalCount = count;
+            Device.updateOne({ deviceId: key }, { $set: { totalCount: count } }).exec().catch(() => {});
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[DeviceRepository] syncAllDeviceCounts error:', err.message);
+    }
   }
 }
 

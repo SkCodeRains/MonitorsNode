@@ -1,6 +1,5 @@
-﻿const crypto = require('crypto');
+const crypto = require('crypto');
 const exclusionRepository = require('../repositories/exclusion.repository');
-const websocketService = require('./websocket.service');
 const { BadRequestError, NotFoundError } = require('../errors');
 
 class ExclusionService {
@@ -42,12 +41,6 @@ class ExclusionService {
 
     const saved = await exclusionRepository.save(newItem);
 
-    websocketService.broadcast({
-      type: 'EXCLUSION_ADDED',
-      item: saved,
-      timestamp: new Date().toISOString()
-    });
-
     return {
       item: saved,
       isExisting: false
@@ -57,18 +50,11 @@ class ExclusionService {
   async deleteExclusionById(id) {
     const deleted = await exclusionRepository.deleteById(id);
     if (!deleted) {
-      throw new NotFoundError('Exclusion with ID "  + id +  \ was not found');
- }
+      throw new NotFoundError(`Exclusion with ID "${id}" was not found`);
+    }
 
- websocketService.broadcast({
- type: 'EXCLUSION_DELETED',
- id: String(id),
- deletedItem: deleted,
- timestamp: new Date().toISOString()
- });
-
- return deleted;
- }
+    return deleted;
+  }
 }
 
 module.exports = new ExclusionService();

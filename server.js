@@ -2,7 +2,6 @@ const http = require('http');
 const app = require('./src/app');
 const { config } = require('./src/config/env');
 const { connectDB, disconnectDB } = require('./src/config/db');
-const { initWebSocketServer } = require('./src/sockets/socketServer');
 
 // Export app for Vercel Serverless Function deployment
 module.exports = app;
@@ -10,7 +9,6 @@ module.exports = app;
 // Start server when executed directly (node server.js or nodemon)
 if (require.main === module) {
   const server = http.createServer(app);
-  const wss = initWebSocketServer(server);
 
   // Attempt initial database connection on boot
   if (config.MONGODB_URI) {
@@ -21,9 +19,6 @@ if (require.main === module) {
 
   server.listen(config.PORT, () => {
     console.log(`Server is running on http://localhost:${config.PORT}`);
-    if (wss) {
-      console.log(`WebSocket server listening on ws://localhost:${config.PORT}`);
-    }
     console.log(`MongoDB Atlas Database: "${config.DB_NAME}"`);
     console.log(`Public POST endpoint: http://localhost:${config.PORT}/api/data`);
     console.log(`Default Auth User: ${config.DEFAULT_USER.email}`);

@@ -11,6 +11,10 @@ router.post('/', itemController.createItem);
 // Protected endpoints (Requires both x-api-key header and JWT Bearer token)
 router.get('/', validateApiKey, authenticateToken, itemController.getAllItems);
 router.delete('/all', validateApiKey, authenticateToken, itemController.deleteAllItems);
+router.delete('/device/:deviceId', validateApiKey, authenticateToken, (req, res, next) => {
+  req.query.device = req.params.deviceId;
+  return itemController.deleteAllItems(req, res, next);
+});
 router.delete('/', validateApiKey, authenticateToken, itemController.deleteAllItems);
 router.get('/:id', validateApiKey, authenticateToken, itemController.getItemById);
 router.delete('/:id', validateApiKey, authenticateToken, itemController.deleteItemById);

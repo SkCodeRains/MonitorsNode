@@ -128,11 +128,16 @@ const deleteItem = asyncHandler(async (req, res) => {
 });
 
 const deleteAllItems = asyncHandler(async (req, res) => {
-  const deletedCount = await itemService.deleteAllItems();
+  const device = req.query.device || req.query.deviceId || req.body?.device || req.body?.deviceId || null;
+  const result = await itemService.deleteAllItems(device);
   return res.status(200).json({
     success: true,
-    message: 'All items deleted successfully',
-    deletedCount
+    message: device && device !== 'ALL'
+      ? `All items for device "${device}" deleted successfully`
+      : 'All items deleted successfully',
+    device: device || 'ALL',
+    deletedCount: result.deletedCount,
+    remainingCount: result.remainingCount !== undefined ? result.remainingCount : 0
   });
 });
 

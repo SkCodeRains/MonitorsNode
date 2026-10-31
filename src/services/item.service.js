@@ -1,11 +1,11 @@
 const crypto = require('crypto');
 const itemRepository = require('../repositories/item.repository');
-const websocketService = require('./websocket.service');
+const deviceRepository = require('../repositories/device.repository');
 const { BadRequestError, NotFoundError } = require('../errors');
 
 class ItemService {
   /**
-   * Processes, persists, and broadcasts a newly received item/event
+   * Processes and persists a newly received item/event
    */
   async createItem(body) {
     if (body === undefined || body === null || (typeof body === 'object' && Object.keys(body).length === 0)) {
@@ -36,12 +36,31 @@ class ItemService {
       ? body.payload
       : (body.data !== undefined ? body.data : (typeof body === 'string' ? body : JSON.stringify(body)));
 
-    let createdAt = new Date();
-    if (body.timestamp) {
+    let eventDate = null;
+    let numericTimestamp = null;
+
+    if (body.timestamp !== undefined && body.timestamp !== null) {
       const numTimestamp = Number(body.timestamp);
-      const parsed = !isNaN(numTimestamp) && numTimestamp > 0 ? new Date(numTimestamp) : new Date(body.timestamp);
-      if (!isNaN(parsed.getTime())) createdAt = parsed;
+      if (!isNaN(numTimestamp) && numTimestamp > 0) {
+        numericTimestamp = numTimestamp;
+        eventDate = new Date(numTimestamp);
+      } else {
+        const parsed = new Date(body.timestamp);
+        if (!isNaN(parsed.getTime())) {
+          eventDate = parsed;
+          numericTimestamp = parsed.getTime();
+        }
+      }
+    } else if (body.createdAt) {
+      const parsed = new Date(body.createdAt);
+      if (!isNaN(parsed.getTime())) {
+        eventDate = parsed;
+        numericTimestamp = parsed.getTime();
+      }
     }
+
+    const createdAt = eventDate || new Date();
+    const finalTimestamp = numericTimestamp || createdAt.getTime();
 
     const itemData = {
       ...body,
@@ -51,19 +70,12 @@ class ItemService {
       deviceName: body.deviceName || null,
       data: payloadContent,
       payload: payloadContent,
+      timestamp: finalTimestamp,
       createdAt: createdAt
     };
 
     const savedItem = await itemRepository.save(itemData);
     const totalCount = itemRepository.memoryStore.length;
-
-    // Broadcast ITEM_ADDED to all active WebSocket clients
-    websocketService.broadcast({
-      type: 'ITEM_ADDED',
-      item: savedItem,
-      totalCount: totalCount,
-      timestamp: new Date().toISOString()
-    });
 
     return {
       item: savedItem,
@@ -97,7 +109,7 @@ class ItemService {
   }
 
   /**
-   * Deletes a single item and notifies WebSocket subscribers
+   * Deletes a single item by unique ID
    */
   async deleteItemById(id) {
     const deletedItem = await itemRepository.deleteById(id);
@@ -105,15 +117,11 @@ class ItemService {
       throw new NotFoundError(`Item with ID "${id}" was not found`);
     }
 
-    const remainingCount = itemRepository.memoryStore.length;
+    // Decrement the corresponding device count
+    const targetDevId = deletedItem.deviceId || 'OTHER';
+    await deviceRepository.decrementDeviceCount(targetDevId, 1);
 
-    websocketService.broadcast({
-      type: 'ITEM_DELETED',
-      id: String(id),
-      deletedItem: deletedItem,
-      remainingCount: remainingCount,
-      timestamp: new Date().toISOString()
-    });
+    const remainingCount = itemRepository.memoryStore.length;
 
     return {
       deletedItem,
@@ -122,20 +130,20 @@ class ItemService {
   }
 
   /**
-   * Deletes all stored items and broadcasts ALL_DELETED
+   * Deletes stored items (optionally for a specific device)
    */
-  async deleteAllItems() {
-    const deletedCount = await itemRepository.deleteAll();
+  async deleteAllItems(device = null) {
+    const deletedCount = await itemRepository.deleteAll(device);
 
-    websocketService.broadcast({
-      type: 'ALL_DELETED',
-      deletedCount: deletedCount,
-      remainingCount: 0,
-      timestamp: new Date().toISOString()
-    });
+    if (device && device !== 'ALL') {
+      await deviceRepository.resetDeviceCount(device);
+    } else {
+      await deviceRepository.resetAllDeviceCounts();
+    }
 
     return {
       deletedCount,
+      device: device || 'ALL',
       remainingCount: 0
     };
   }
