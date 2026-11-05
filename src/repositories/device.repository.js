@@ -1,5 +1,6 @@
 const Device = require('../models/device.model');
 const Item = require('../models/item.model');
+const DailyUsage = require('../models/dailyUsage.model');
 const { connectDB, isDbConnected } = require('../config/db');
 
 class DeviceRepository {
@@ -83,48 +84,10 @@ class DeviceRepository {
   }
 
   /**
-   * Returns all active devices with live updated item counts
+   * Returns all active devices with OTHER permanently as the first tab
    */
   async getAllDevices() {
     await this.init();
-
-    // Dynamically update live counts from MongoDB so counts are never stale
-    try {
-      if (isDbConnected()) {
-        const counts = await Item.aggregate([
-          {
-            $group: {
-              _id: '$deviceId',
-              count: { $sum: 1 }
-            }
-          }
-        ]);
-
-        const countMap = new Map();
-        let otherTotal = 0;
-        for (const c of counts) {
-          if (!c._id || c._id === 'OTHER') {
-            otherTotal += c.count;
-          } else {
-            countMap.set(String(c._id).trim().toLowerCase(), c.count);
-          }
-        }
-
-        const other = this.deviceCache.get('OTHER');
-        if (other) {
-          other.totalCount = otherTotal;
-        }
-
-        for (const [key, val] of this.deviceCache.entries()) {
-          if (key !== 'OTHER') {
-            const cleanKey = String(key).trim().toLowerCase();
-            val.totalCount = countMap.get(cleanKey) || 0;
-          }
-        }
-      }
-    } catch (err) {
-      console.warn('[DeviceRepository] Failed to refresh live device counts:', err.message);
-    }
 
     const devicesList = [];
     const other = this.deviceCache.get('OTHER');
@@ -247,11 +210,25 @@ class DeviceRepository {
       device.lastSeen = new Date();
     }
 
-    // Persist to MongoDB
+    // Persist snapshot to MongoDB Device
     try {
       await Device.updateOne(
         { deviceId: cleanId },
         { $set: { dataUsage: usageData, lastSeen: new Date() } }
+      );
+
+      // Persist daily history to DailyUsage collection (YYYY-MM-DD)
+      const dateStr = lastUpdated.toISOString().slice(0, 10);
+      await DailyUsage.findOneAndUpdate(
+        { deviceId: cleanId, date: dateStr },
+        {
+          $set: {
+            deviceId: cleanId,
+            date: dateStr,
+            dataUsage: usageData
+          }
+        },
+        { upsert: true, returnDocument: 'after' }
       );
     } catch (err) {
       console.warn('[DeviceRepository] Data usage DB update error:', err.message);
@@ -285,17 +262,55 @@ class DeviceRepository {
       device.lastSeen = new Date();
     }
 
-    // Persist to MongoDB
+    // Persist snapshot to MongoDB Device
     try {
       await Device.updateOne(
         { deviceId: cleanId },
         { $set: { appUsage: sanitizedApps, lastSeen: new Date() } }
+      );
+
+      // Persist daily history to DailyUsage collection (YYYY-MM-DD)
+      const dateStr = (new Date()).toISOString().slice(0, 10);
+      await DailyUsage.findOneAndUpdate(
+        { deviceId: cleanId, date: dateStr },
+        {
+          $set: {
+            deviceId: cleanId,
+            date: dateStr,
+            appUsage: sanitizedApps
+          }
+        },
+        { upsert: true, returnDocument: 'after' }
       );
     } catch (err) {
       console.warn('[DeviceRepository] App usage DB update error:', err.message);
     }
 
     return device;
+  }
+
+  /**
+   * Returns daily usage history for past N days (e.g. today, yesterday, last 7 days)
+   */
+  async getUsageHistory(deviceId, days = 7) {
+    await this.init();
+    const limitDays = Math.max(1, Math.min(30, parseInt(days, 10) || 7));
+
+    try {
+      await connectDB();
+      if (isDbConnected()) {
+        const cleanId = String(deviceId).trim().toLowerCase().replace(/[^a-z0-9_]/g, '_');
+        const filter = (cleanId && cleanId !== 'all') ? { deviceId: cleanId } : {};
+        const records = await DailyUsage.find(filter)
+          .sort({ date: -1 })
+          .limit(limitDays)
+          .lean();
+        return records;
+      }
+    } catch (err) {
+      console.warn('[DeviceRepository] getUsageHistory error:', err.message);
+    }
+    return [];
   }
 
   /**

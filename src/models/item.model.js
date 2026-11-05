@@ -69,6 +69,7 @@ const itemSchema = new mongoose.Schema(
 // High-Performance Compound Indexes for Device and Channel Filtering
 itemSchema.index({ deviceId: 1, updatedAt: -1 });
 itemSchema.index({ deviceId: 1, createdAt: -1 });
+itemSchema.index({ createdAt: -1, _id: -1 });
 itemSchema.index({ updatedAt: -1 });
 itemSchema.index({ deviceId: 1, eventType: 1, createdAt: -1 });
 

@@ -51,8 +51,22 @@ const updateAppUsage = asyncHandler(async (req, res) => {
   });
 });
 
+const getUsageHistory = asyncHandler(async (req, res) => {
+  const { deviceId } = req.params;
+  const { days = 7 } = req.query;
+
+  const history = await deviceRepository.getUsageHistory(deviceId, days);
+  return res.status(200).json({
+    success: true,
+    deviceId,
+    count: history.length,
+    history
+  });
+});
+
 module.exports = {
   getDevices,
   updateDataUsage,
-  updateAppUsage
+  updateAppUsage,
+  getUsageHistory
 };

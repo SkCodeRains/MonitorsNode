@@ -59,10 +59,10 @@ const createItem = asyncHandler(async (req, res) => {
 });
 
 const getAllItems = asyncHandler(async (req, res) => {
-  const { page, limit, category, search, device } = req.query;
+  const { page, limit, category, search, device, counts } = req.query;
 
-  // Default device tab is 'OTHER'
-  const selectedDevice = device !== undefined ? device : 'OTHER';
+  // Default device tab is 'ALL'
+  const selectedDevice = device !== undefined ? device : 'ALL';
 
   // If page or limit is provided, execute server-side paginated query
   if (page !== undefined || limit !== undefined) {
@@ -71,7 +71,8 @@ const getAllItems = asyncHandler(async (req, res) => {
       limit: parseInt(limit, 10) || 25,
       category: category || 'ALL',
       search: search || '',
-      device: selectedDevice
+      device: selectedDevice,
+      counts: counts !== undefined ? counts : null
     });
 
     return res.status(200).json({
