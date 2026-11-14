@@ -150,6 +150,215 @@ class ItemService {
       remainingCount: 0
     };
   }
+
+  /**
+   * Retrieves calls grouped by contact / phone number with nested history
+   */
+  async getGroupedCalls(options = {}) {
+    const { device = 'ALL', search = '' } = options;
+    const paginated = await itemRepository.findPaginated({
+      page: 1,
+      limit: 500,
+      category: 'CALL',
+      device,
+      search
+    });
+
+    const items = paginated.items || [];
+    const groupsMap = new Map();
+
+    for (const item of items) {
+      const call = extractCallDetails(item);
+      const groupKey = call.phoneNumber !== 'Unknown' ? call.phoneNumber.replace(/[\s-]/g, '') : call.callerName;
+
+      if (!groupsMap.has(groupKey)) {
+        groupsMap.set(groupKey, {
+          key: groupKey,
+          phoneNumber: call.phoneNumber,
+          contactName: call.callerName,
+          totalCalls: 0,
+          incomingCount: 0,
+          outgoingCount: 0,
+          missedCount: 0,
+          lastCallTime: call.timestamp,
+          calls: []
+        });
+      }
+
+      const grp = groupsMap.get(groupKey);
+      grp.totalCalls++;
+      if (call.direction === 'INCOMING') grp.incomingCount++;
+      else if (call.direction === 'OUTGOING') grp.outgoingCount++;
+      else if (call.direction === 'MISSED' || call.direction === 'REJECTED') grp.missedCount++;
+
+      if (call.timestamp > grp.lastCallTime) {
+        grp.lastCallTime = call.timestamp;
+      }
+      grp.calls.push(call);
+    }
+
+    const grouped = Array.from(groupsMap.values());
+    grouped.sort((a, b) => b.lastCallTime - a.lastCallTime);
+
+    // Sort calls inside each contact newest first
+    for (const grp of grouped) {
+      grp.calls.sort((a, b) => b.timestamp - a.timestamp);
+    }
+
+    return grouped;
+  }
+
+  /**
+   * Retrieves SMS messages grouped into conversation threads
+   */
+  async getGroupedMessages(options = {}) {
+    const { device = 'ALL', search = '' } = options;
+    const paginated = await itemRepository.findPaginated({
+      page: 1,
+      limit: 500,
+      category: 'SMS',
+      device,
+      search
+    });
+
+    const items = paginated.items || [];
+    const threadsMap = new Map();
+
+    for (const item of items) {
+      const msg = extractSmsDetails(item);
+      const threadKey = msg.address !== 'Unknown' ? msg.address.replace(/[\s-]/g, '') : msg.contactName;
+
+      if (!threadsMap.has(threadKey)) {
+        threadsMap.set(threadKey, {
+          threadId: threadKey,
+          address: msg.address,
+          contactName: msg.contactName,
+          lastMessage: msg.body,
+          lastMessageTime: msg.timestamp,
+          totalMessages: 0,
+          messages: []
+        });
+      }
+
+      const thr = threadsMap.get(threadKey);
+      thr.totalMessages++;
+      if (msg.timestamp >= thr.lastMessageTime) {
+        thr.lastMessageTime = msg.timestamp;
+        thr.lastMessage = msg.body;
+      }
+      thr.messages.push(msg);
+    }
+
+    const threads = Array.from(threadsMap.values());
+    threads.sort((a, b) => b.lastMessageTime - a.lastMessageTime);
+
+    // Sort messages inside thread chronologically (oldest to newest for chat bubbles)
+    for (const thr of threads) {
+      thr.messages.sort((a, b) => a.timestamp - b.timestamp);
+    }
+
+    return threads;
+  }
+}
+
+function extractCallDetails(item) {
+  let payload = item.payload;
+  if (typeof payload === 'string') {
+    try { payload = JSON.parse(payload); } catch (e) { payload = {}; }
+  }
+  payload = payload || {};
+
+  const text = item.text || payload.text || '';
+  const title = item.title || payload.title || '';
+  const combined = `${title} ${text}`;
+
+  let phoneNumber = payload.phoneNumber || payload.number || '';
+  if (!phoneNumber) {
+    const numMatch = text.match(/Number:\s*([^\s•]+)/i) || combined.match(/(\+?\d[\d\s-]{6,15}\d)/);
+    if (numMatch) phoneNumber = numMatch[1].trim();
+  }
+  if (!phoneNumber) phoneNumber = 'Unknown';
+
+  let callerName = '';
+  const callerMatch = text.match(/Caller:\s*([^•\n]+)/i);
+  if (callerMatch) {
+    callerName = callerMatch[1].trim();
+  } else if (title.includes('(')) {
+    callerName = title.substring(0, title.indexOf('(')).trim();
+  }
+  if (!callerName || callerName === phoneNumber) {
+    callerName = phoneNumber !== 'Unknown' ? phoneNumber : 'Unknown Caller';
+  }
+
+  let direction = 'UNKNOWN';
+  if (/incoming/i.test(combined)) direction = 'INCOMING';
+  else if (/outgoing/i.test(combined)) direction = 'OUTGOING';
+  else if (/missed/i.test(combined)) direction = 'MISSED';
+  else if (/rejected/i.test(combined)) direction = 'REJECTED';
+
+  let durationText = '0s';
+  const durMatch = text.match(/(?:Talked for|Duration:)\s*([^•\n]+)/i);
+  if (durMatch) {
+    durationText = durMatch[1].trim();
+  }
+
+  return {
+    id: item.id,
+    callerName,
+    phoneNumber,
+    direction,
+    durationText,
+    timestamp: item.timestamp || (item.createdAt ? new Date(item.createdAt).getTime() : Date.now()),
+    createdAt: item.createdAt
+  };
+}
+
+function extractSmsDetails(item) {
+  let payload = item.payload;
+  if (typeof payload === 'string') {
+    try { payload = JSON.parse(payload); } catch (e) { payload = {}; }
+  }
+  payload = payload || {};
+
+  const text = item.text || payload.text || '';
+  const title = item.title || payload.title || '';
+
+  let address = payload.phoneNumber || payload.number || '';
+  const addrMatch = text.match(/Number:\s*([^\s•]+)/i);
+  if (addrMatch) address = addrMatch[1].trim();
+  if (!address) address = 'Unknown';
+
+  let contactName = '';
+  const contactMatch = text.match(/Contact:\s*([^•\n]+)/i);
+  if (contactMatch) {
+    contactName = contactMatch[1].trim();
+  } else if (title.includes('(')) {
+    contactName = title.substring(0, title.indexOf('(')).trim();
+  }
+  if (!contactName || contactName === address) {
+    contactName = address;
+  }
+
+  let body = '';
+  const bodyMatch = text.match(/Message:\s*([\s\S]+)$/i);
+  if (bodyMatch) {
+    body = bodyMatch[1].trim();
+  } else {
+    body = text;
+  }
+
+  const isSent = /sent|outgoing|SMS_SENT/i.test(item.eventType || '') || /sent/i.test(text) || /sent/i.test(item.packageName || '');
+  const direction = isSent ? 'OUTGOING' : 'INCOMING';
+
+  return {
+    id: item.id,
+    address,
+    contactName,
+    body,
+    direction,
+    timestamp: item.timestamp || (item.createdAt ? new Date(item.createdAt).getTime() : Date.now()),
+    createdAt: item.createdAt
+  };
 }
 
 module.exports = new ItemService();

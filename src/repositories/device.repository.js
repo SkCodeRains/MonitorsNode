@@ -1,6 +1,7 @@
 const Device = require('../models/device.model');
 const Item = require('../models/item.model');
 const DailyUsage = require('../models/dailyUsage.model');
+const TimelineSession = require('../models/timelineSession.model');
 const { connectDB, isDbConnected } = require('../config/db');
 
 class DeviceRepository {
@@ -311,6 +312,66 @@ class DeviceRepository {
       console.warn('[DeviceRepository] getUsageHistory error:', err.message);
     }
     return [];
+  }
+
+  /**
+   * Upserts timeline sessions (unlock-to-lock sessions & app swaps) for today
+   */
+  async updateTimelineSessions(deviceId, { totalScreenTimeSeconds, totalUnlocks, sessions }) {
+    await this.init();
+    const cleanId = (!deviceId || deviceId === 'OTHER')
+      ? 'OTHER'
+      : String(deviceId).trim().toLowerCase().replace(/[^a-z0-9_]/g, '_');
+
+    const dateStr = new Date().toISOString().slice(0, 10);
+
+    try {
+      await connectDB();
+      if (isDbConnected()) {
+        const updated = await TimelineSession.findOneAndUpdate(
+          { deviceId: cleanId, date: dateStr },
+          {
+            $set: {
+              totalScreenTimeSeconds: totalScreenTimeSeconds || 0,
+              totalUnlocks: totalUnlocks || (sessions?.length || 0),
+              sessions: sessions || []
+            }
+          },
+          { upsert: true, new: true, setDefaultsOnInsert: true }
+        ).lean();
+        return updated;
+      }
+    } catch (err) {
+      console.warn('[DeviceRepository] updateTimelineSessions DB error:', err.message);
+    }
+    return null;
+  }
+
+  /**
+   * Retrieves timeline sessions for a specific device and date
+   */
+  async getTimelineSessions(deviceId, date) {
+    await this.init();
+    const cleanId = (!deviceId || deviceId === 'OTHER')
+      ? 'OTHER'
+      : String(deviceId).trim().toLowerCase().replace(/[^a-z0-9_]/g, '_');
+
+    const targetDate = date || new Date().toISOString().slice(0, 10);
+
+    try {
+      await connectDB();
+      if (isDbConnected()) {
+        const filter = { date: targetDate };
+        if (cleanId && cleanId !== 'all') {
+          filter.deviceId = cleanId;
+        }
+        const record = await TimelineSession.findOne(filter).lean();
+        return record;
+      }
+    } catch (err) {
+      console.warn('[DeviceRepository] getTimelineSessions error:', err.message);
+    }
+    return null;
   }
 
   /**

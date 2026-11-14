@@ -142,11 +142,33 @@ const deleteAllItems = asyncHandler(async (req, res) => {
   });
 });
 
+const getCalls = asyncHandler(async (req, res) => {
+  const { device = 'ALL', search = '' } = req.query;
+  const data = await itemService.getGroupedCalls({ device, search });
+  return res.status(200).json({
+    success: true,
+    count: data.length,
+    data
+  });
+});
+
+const getMessages = asyncHandler(async (req, res) => {
+  const { device = 'ALL', search = '' } = req.query;
+  const data = await itemService.getGroupedMessages({ device, search });
+  return res.status(200).json({
+    success: true,
+    count: data.length,
+    data
+  });
+});
+
 module.exports = {
   createItem,
   getAllItems,
   getItemById,
   deleteItem,
   deleteItemById: deleteItem,
-  deleteAllItems
+  deleteAllItems,
+  getCalls,
+  getMessages
 };

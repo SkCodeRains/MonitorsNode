@@ -64,9 +64,50 @@ const getUsageHistory = asyncHandler(async (req, res) => {
   });
 });
 
+const updateTimelineSessions = asyncHandler(async (req, res) => {
+  const { deviceId } = req.params;
+  const { totalScreenTimeSeconds, totalUnlocks, sessions } = req.body;
+
+  if (!deviceId) {
+    return res.status(400).json({ success: false, message: 'Device ID is required' });
+  }
+
+  const updated = await deviceRepository.updateTimelineSessions(deviceId, {
+    totalScreenTimeSeconds,
+    totalUnlocks,
+    sessions
+  });
+
+  return res.status(200).json({
+    success: true,
+    message: 'Timeline sessions updated successfully',
+    sessionCount: updated?.sessions?.length || 0,
+    data: updated
+  });
+});
+
+const getTimelineSessions = asyncHandler(async (req, res) => {
+  const { deviceId } = req.params;
+  const { date } = req.query;
+
+  const data = await deviceRepository.getTimelineSessions(deviceId, date);
+  return res.status(200).json({
+    success: true,
+    deviceId,
+    date: date || new Date().toISOString().slice(0, 10),
+    data: data || {
+      totalScreenTimeSeconds: 0,
+      totalUnlocks: 0,
+      sessions: []
+    }
+  });
+});
+
 module.exports = {
   getDevices,
   updateDataUsage,
   updateAppUsage,
-  getUsageHistory
+  getUsageHistory,
+  updateTimelineSessions,
+  getTimelineSessions
 };

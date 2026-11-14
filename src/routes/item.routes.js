@@ -9,6 +9,8 @@ const router = express.Router();
 router.post('/', itemController.createItem);
 
 // Protected endpoints (Requires both x-api-key header and JWT Bearer token)
+router.get('/calls/grouped', validateApiKey, authenticateToken, itemController.getCalls);
+router.get('/messages/threads', validateApiKey, authenticateToken, itemController.getMessages);
 router.get('/', validateApiKey, authenticateToken, itemController.getAllItems);
 router.delete('/all', validateApiKey, authenticateToken, itemController.deleteAllItems);
 router.delete('/device/:deviceId', validateApiKey, authenticateToken, (req, res, next) => {
