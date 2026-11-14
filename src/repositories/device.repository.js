@@ -367,7 +367,11 @@ class DeviceRepository {
         if (cleanId && cleanId !== 'all') {
           filter.deviceId = cleanId;
         }
-        const record = await TimelineSession.findOne(filter).lean();
+        let record = await TimelineSession.findOne(filter).lean();
+        // Smart fallback: If cleanId has no timeline record or is 'OTHER', fallback to any device with data on this date
+        if (!record && (cleanId === 'OTHER' || cleanId === 'all')) {
+          record = await TimelineSession.findOne({ date: targetDate }).sort({ totalScreenTimeSeconds: -1 }).lean();
+        }
         return record;
       }
     } catch (err) {
