@@ -315,15 +315,17 @@ class DeviceRepository {
   }
 
   /**
-   * Upserts timeline sessions (unlock-to-lock sessions & app swaps) for today
+   * Upserts timeline sessions (unlock-to-lock sessions & app swaps) for today or specified date
    */
-  async updateTimelineSessions(deviceId, { totalScreenTimeSeconds, totalUnlocks, sessions }) {
+  async updateTimelineSessions(deviceId, { date, totalScreenTimeSeconds, totalUnlocks, sessions }) {
     await this.init();
     const cleanId = (!deviceId || deviceId === 'OTHER')
       ? 'OTHER'
       : String(deviceId).trim().toLowerCase().replace(/[^a-z0-9_]/g, '_');
 
-    const dateStr = new Date().toISOString().slice(0, 10);
+    const dateStr = (date && /^\d{4}-\d{2}-\d{2}$/.test(date))
+      ? date
+      : new Date().toISOString().slice(0, 10);
 
     try {
       await connectDB();

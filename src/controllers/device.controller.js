@@ -66,13 +66,14 @@ const getUsageHistory = asyncHandler(async (req, res) => {
 
 const updateTimelineSessions = asyncHandler(async (req, res) => {
   const { deviceId } = req.params;
-  const { totalScreenTimeSeconds, totalUnlocks, sessions } = req.body;
+  const { date, totalScreenTimeSeconds, totalUnlocks, sessions } = req.body;
 
   if (!deviceId) {
     return res.status(400).json({ success: false, message: 'Device ID is required' });
   }
 
   const updated = await deviceRepository.updateTimelineSessions(deviceId, {
+    date,
     totalScreenTimeSeconds,
     totalUnlocks,
     sessions
