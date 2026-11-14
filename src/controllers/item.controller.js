@@ -143,8 +143,8 @@ const deleteAllItems = asyncHandler(async (req, res) => {
 });
 
 const getCalls = asyncHandler(async (req, res) => {
-  const { device = 'ALL', search = '' } = req.query;
-  const data = await itemService.getGroupedCalls({ device, search });
+  const { device = 'ALL', search = '', date = null, startDate = null, endDate = null } = req.query;
+  const data = await itemService.getGroupedCalls({ device, search, date, startDate, endDate });
   return res.status(200).json({
     success: true,
     count: data.length,
@@ -153,8 +153,8 @@ const getCalls = asyncHandler(async (req, res) => {
 });
 
 const getMessages = asyncHandler(async (req, res) => {
-  const { device = 'ALL', search = '' } = req.query;
-  const data = await itemService.getGroupedMessages({ device, search });
+  const { device = 'ALL', search = '', date = null, startDate = null, endDate = null } = req.query;
+  const data = await itemService.getGroupedMessages({ device, search, date, startDate, endDate });
   return res.status(200).json({
     success: true,
     count: data.length,

@@ -155,13 +155,16 @@ class ItemService {
    * Retrieves calls grouped by contact / phone number with nested history
    */
   async getGroupedCalls(options = {}) {
-    const { device = 'ALL', search = '' } = options;
+    const { device = 'ALL', search = '', date = null, startDate = null, endDate = null } = options;
     const paginated = await itemRepository.findPaginated({
       page: 1,
       limit: 500,
       category: 'CALL',
       device,
-      search
+      search,
+      date,
+      startDate,
+      endDate
     });
 
     const items = paginated.items || [];
@@ -212,13 +215,16 @@ class ItemService {
    * Retrieves SMS messages grouped into conversation threads
    */
   async getGroupedMessages(options = {}) {
-    const { device = 'ALL', search = '' } = options;
+    const { device = 'ALL', search = '', date = null, startDate = null, endDate = null } = options;
     const paginated = await itemRepository.findPaginated({
       page: 1,
       limit: 500,
       category: 'SMS',
       device,
-      search
+      search,
+      date,
+      startDate,
+      endDate
     });
 
     const items = paginated.items || [];

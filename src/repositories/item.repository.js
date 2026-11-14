@@ -29,7 +29,7 @@ class ItemRepository {
   /**
    * Retrieves paginated items with device filtering, category filtering, and search
    */
-  async findPaginated({ page = 1, limit = 25, category = 'ALL', search = '', device = 'ALL', counts = null }) {
+  async findPaginated({ page = 1, limit = 25, category = 'ALL', search = '', device = 'ALL', counts = null, startDate = null, endDate = null, date = null }) {
     const pageNum = Math.max(1, parseInt(page, 10) || 1);
     const limitNum = Math.max(1, Math.min(100, parseInt(limit, 10) || 25));
     const skip = (pageNum - 1) * limitNum;
@@ -105,6 +105,38 @@ class ItemRepository {
               { eventType: sRegex },
               { data: sRegex },
               { payload: sRegex }
+            ]
+          });
+        }
+
+        // 4. Date Range Filter
+        if (date && /^\d{4}-\d{2}-\d{2}$/.test(String(date).trim())) {
+          const dStr = String(date).trim();
+          const startOfDate = new Date(`${dStr}T00:00:00.000Z`);
+          const endOfDate = new Date(`${dStr}T23:59:59.999Z`);
+          andConditions.push({
+            $or: [
+              { createdAt: { $gte: startOfDate, $lte: endOfDate } },
+              { timestamp: { $gte: startOfDate.getTime(), $lte: endOfDate.getTime() } }
+            ]
+          });
+        } else if (startDate || endDate) {
+          const dateCond = {};
+          const timeCond = {};
+          if (startDate) {
+            const startD = new Date(startDate);
+            dateCond.$gte = startD;
+            timeCond.$gte = startD.getTime();
+          }
+          if (endDate) {
+            const endD = new Date(endDate);
+            dateCond.$lte = endD;
+            timeCond.$lte = endD.getTime();
+          }
+          andConditions.push({
+            $or: [
+              { createdAt: dateCond },
+              { timestamp: timeCond }
             ]
           });
         }
@@ -232,6 +264,24 @@ class ItemRepository {
           (i.text && i.text.toLowerCase().includes(s)) ||
           (i.source && i.source.toLowerCase().includes(s)) ||
           (i.eventType && i.eventType.toLowerCase().includes(s));
+      });
+    }
+
+    // Filter by Date
+    if (date && /^\d{4}-\d{2}-\d{2}$/.test(String(date).trim())) {
+      const dStr = String(date).trim();
+      const startT = new Date(`${dStr}T00:00:00.000Z`).getTime();
+      const endT = new Date(`${dStr}T23:59:59.999Z`).getTime();
+      filtered = filtered.filter(i => {
+        const t = new Date(i.createdAt || i.timestamp || 0).getTime();
+        return t >= startT && t <= endT;
+      });
+    } else if (startDate || endDate) {
+      const startT = startDate ? new Date(startDate).getTime() : 0;
+      const endT = endDate ? new Date(endDate).getTime() : Infinity;
+      filtered = filtered.filter(i => {
+        const t = new Date(i.createdAt || i.timestamp || 0).getTime();
+        return t >= startT && t <= endT;
       });
     }
 
